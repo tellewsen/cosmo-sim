@@ -34,4 +34,3 @@ pub use utils::config::example_config;
 
 // Index helpers re-exported for integration tests
 pub use utils::types::{idx3p, from_flat};
-pub use gravity::poisson::{flat3p, flat3};

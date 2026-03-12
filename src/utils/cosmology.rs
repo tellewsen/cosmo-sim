@@ -96,32 +96,26 @@ impl Cosmology {
         om_a.powf(0.55)
     }
 
-    /// Linear growth factor  D(a)  normalised to D(1) = 1,
-    /// computed by 4th-order RK integration of
-    ///   dD/dτ = D̃   and   dD̃/dτ = -2H D̃ + (3/2) H₀² Ω_m a⁻³ D / a.
+    /// Linear growth factor  D(a)  normalised to D(a=1) = 1.
+    ///
+    /// Uses the integral form
+    ///   D(a) ∝ H(a) ∫₀ᵃ  da' / (a' H(a'))³
+    /// evaluated by midpoint quadrature (10 000 steps) — same style as `tau_of_a`.
     pub fn growth_factor(&self, a: Real) -> Real {
-        if a <= 1e-4 { return a; }  // matter-dominated: D ∝ a
-        let n_steps = 2000_usize;
-        let a0 = 1e-4_f64;
-        let dtau = (a - a0) / n_steps as Real;
-        // State: [D, dD/da]
-        // dD/da = f * D / a  (using logarithmic growth rate)
-        let mut d  = a0;
-        let mut dd = d;   // dD/da = 1 at a=0 in matter domination
-        for _ in 0..n_steps {
-            let a_cur = a0 + dtau;
-            let f = |ai: Real, di: Real, ddi: Real| {
-                let fi = self.growth_rate(ai);
-                (ddi, fi * di / ai * ddi.signum()) // simplified
-            };
-            let _ = (a_cur, d, dd, f); // suppress warnings; use Euler below
-            let fi = self.growth_rate(a0 + dtau * 0.5);
-            dd += dtau * fi * dd;
-            d  += dtau * dd;
-        }
-        // Normalise to D(1) = 1 by dividing by D(a=1)
-        // (normalisation handled at call site in practice)
-        d
+        let integral = |a_upper: Real| -> Real {
+            let n  = 10_000_usize;
+            let da = a_upper / n as Real;
+            let mut sum = 0.0_f64;
+            let mut ai  = 0.5 * da;
+            for _ in 0..n {
+                let hval = self.da_dtau(ai);   // a·H(a)
+                sum += da / (hval * hval * hval);
+                ai  += da;
+            }
+            sum
+        };
+        let d_a1 = self.e_of_a(1.0) * integral(1.0);
+        self.e_of_a(a) * integral(a) / d_a1
     }
 
     /// Supercomoving time τ elapsed from a_ini to a_fin,

@@ -12,6 +12,7 @@
 //!  8. Refine AMR
 //!  9. Write output if due
 
+use rayon::prelude::*;
 use crate::{
     amr::grid::AmrGrid,
     gravity::poisson::{solve_poisson, grad_phi},
@@ -231,11 +232,11 @@ impl Simulation {
     // ── Time stepping ─────────────────────────────────────────────────────────
 
     fn compute_dtau(&self) -> Real {
-        // CFL: Δτ < courant * dx / v_max
-        let v_max: Real = self.particles.vel.iter()
-            .flat_map(|v| v.iter().copied())
+        // CFL: Δτ < courant * dx / v_max  (parallel reduction over particles)
+        let v_max: Real = self.particles.vel.par_iter()
+            .flat_map(|v| v.par_iter().copied())
             .map(f64::abs)
-            .fold(0.0_f64, f64::max)
+            .reduce(|| 0.0_f64, f64::max)
             .max(1.0e-10);
         let n   = self.config.run.n_grid as Real;
         let dx  = self.config.run.box_size / n;

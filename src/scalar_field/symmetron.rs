@@ -126,28 +126,27 @@ fn ngs_sweep(
     for color in 0..2_usize {
         for i in 0..n as isize {
             for j in 0..n as isize {
-                for k in 0..n as isize {
-                    if ((i + j + k) as usize) % 2 != color { continue; }
-                    let c   = idx3p(i, j, k, n);
+                // Step by 2 to select only cells of the current colour — no branch
+                let k_start = ((i + j) as usize % 2 + color) % 2;
+                let mut k   = k_start as isize;
+                while k < n as isize {
+                    let c     = idx3p(i, j, k, n);
                     let chi_c = snap[c];
                     let rho_c = rho[c];
-                    let nb  = snap[idx3p(i+1, j,   k,   n)]
-                            + snap[idx3p(i-1, j,   k,   n)]
-                            + snap[idx3p(i,   j+1, k,   n)]
-                            + snap[idx3p(i,   j-1, k,   n)]
-                            + snap[idx3p(i,   j,   k+1, n)]
-                            + snap[idx3p(i,   j,   k-1, n)];
-                    let f   = source_chi(chi_c, rho_c, a, p);
-                    let df  = dsource_dchi(chi_c, rho_c, a, p);
-                    // Newton-GS for ∇²χ = f(χ):
-                    //   residual r = nb/dx² − 6χ/dx² − f(χ)
-                    //   ∂r/∂χ = −6/dx² − f'(χ)
-                    //   χ_new = χ − r / (∂r/∂χ) = (χ f'+ nb/dx² − f) / (6/dx² + f')
-                    let denom = 6.0 * inv_dx2 + df;   // ← correct sign: +df
-                    if denom.abs() < 1e-30 { continue; }
-                    chi[c] = (chi_c * df + nb * inv_dx2 - f) / denom;
-                    // Clamp field to physical range [-1, 1]
-                    chi[c] = chi[c].clamp(-1.0, 1.0);
+                    let nb    = snap[idx3p(i+1, j,   k,   n)]
+                              + snap[idx3p(i-1, j,   k,   n)]
+                              + snap[idx3p(i,   j+1, k,   n)]
+                              + snap[idx3p(i,   j-1, k,   n)]
+                              + snap[idx3p(i,   j,   k+1, n)]
+                              + snap[idx3p(i,   j,   k-1, n)];
+                    let f     = source_chi(chi_c, rho_c, a, p);
+                    let df    = dsource_dchi(chi_c, rho_c, a, p);
+                    // Newton-GS update: χ_new = (χ f' + Σnb/dx² − f) / (6/dx² + f')
+                    let denom = 6.0 * inv_dx2 + df;
+                    if denom.abs() > 1e-30 {
+                        chi[c] = ((chi_c * df + nb * inv_dx2 - f) / denom).clamp(-1.0, 1.0);
+                    }
+                    k += 2;
                 }
             }
         }

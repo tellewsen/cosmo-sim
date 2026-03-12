@@ -254,7 +254,7 @@ impl Particles {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::utils::types::{idx3p, from_flat};
+    use crate::utils::types::idx3p;
 
     fn make_grid_particles(ng: usize, l: Real) -> Particles {
         let n = ng * ng * ng;

@@ -10,7 +10,7 @@
 use cosmo_sim::{
     particles::particles::Particles,
     gravity::poisson::{solve_poisson_mg, grad_phi},
-    scalar_field::symmetron::{solve_symmetron, SymmetronParams, chi_equilibrium, source_chi},
+    scalar_field::symmetron::{solve_symmetron, SymmetronParams, source_chi},
     utils::{cosmology::Cosmology, types::{Real, idx3p}},
 };
 use std::f64::consts::PI;

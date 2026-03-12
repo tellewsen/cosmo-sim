@@ -19,10 +19,6 @@
 use rayon::prelude::*;
 use crate::utils::types::{Real, idx3p, from_flat};
 
-/// Re-export `idx3p` under the legacy names used by `scalar_field`.
-pub use crate::utils::types::idx3p as flat3p;
-pub use crate::utils::types::idx3p as flat3;
-
 // ─── Laplacian stencil (6-point) ──────────────────────────────────────────────
 
 /// Apply the 7-point (6-neighbour) discrete Laplacian to `phi` and subtract
