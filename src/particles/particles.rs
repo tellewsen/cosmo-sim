@@ -22,7 +22,7 @@
 //! CIC uses C-order (row-major) indexing throughout — see `crate::utils::types`.
 
 use rayon::prelude::*;
-use crate::utils::types::{Real, idx3p, from_flat};
+use crate::utils::types::{Real, idx3p};
 
 // ── Particle storage (Structure-of-Arrays) ────────────────────────────────────
 
@@ -254,7 +254,7 @@ impl Particles {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::utils::types::idx3p;
+    use crate::utils::types::{idx3p, from_flat};
 
     fn make_grid_particles(ng: usize, l: Real) -> Particles {
         let n = ng * ng * ng;

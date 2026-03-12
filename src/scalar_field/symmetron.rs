@@ -32,8 +32,7 @@
 //! This matches `crate::utils::types::idx3p`.
 
 use crate::gravity::poisson::{restrict_uniform, prolongate_uniform};
-use crate::utils::types::{Real, idx3p, from_flat};
-use crate::utils::cosmology::Cosmology;
+use crate::utils::types::{Real, idx3p};
 
 /// Model parameters for the Symmetron.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -204,8 +203,6 @@ fn v_cycle_sym(
         return;
     }
 
-    let res   = residual_chi(chi, rho, a, dx, n, p);
-    let res_c = restrict_uniform(&res, n);
     let rho_c = restrict_uniform(rho, n);
     let chi_c_arr = restrict_uniform(chi, n);
     let nc    = n / 2;
@@ -340,6 +337,7 @@ pub fn fifth_force_particles(
 pub mod tests {
     use super::*;
     use std::f64::consts::PI;
+    use crate::utils::types::from_flat;
 
     fn default_p() -> SymmetronParams { SymmetronParams::default() }
 

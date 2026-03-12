@@ -182,6 +182,7 @@ impl Simulation {
 
     // ── Scalar field dispatch ─────────────────────────────────────────────────
 
+    #[allow(unused_variables)]
     fn solve_scalar_field(
         &mut self,
         rho: &[Real],

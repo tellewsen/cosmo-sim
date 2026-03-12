@@ -293,7 +293,7 @@ pub fn solve_poisson(
     epsilon: Real, max_iter: u32, n_smooth: usize,
 ) -> Vec<Real> {
     #[cfg(feature = "fft_pm")]
-    { solve_poisson_fft(source, dx, n) }
+    { let _ = (epsilon, max_iter, n_smooth); solve_poisson_fft(source, dx, n) }
     #[cfg(not(feature = "fft_pm"))]
     { solve_poisson_mg(source, dx, n, epsilon, max_iter, n_smooth) }
 }
