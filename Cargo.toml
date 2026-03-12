@@ -1,15 +1,9 @@
 [package]
 name = "cosmo_sim"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Based on ISIS/RAMSES by Llinares, Mota & Winther (2014), UiO"]
-description = """
-Cosmological N-body simulation with modified gravity / scalar field support.
-Architecture based on ISIS (Llinares, Mota & Winther 2014), itself a modified
-gravity extension of RAMSES (Teyssier 2002). Implements AMR, particle-mesh
-gravity, and a nonlinear multigrid solver for scalar-tensor theories including
-the Symmetron screening mechanism.
-"""
+description = "Cosmological N-body simulation with modified gravity scalar field support"
 
 [lib]
 name = "cosmo_sim"
@@ -20,7 +14,7 @@ name = "cosmo_sim"
 path = "src/main.rs"
 
 [dependencies]
-rayon        = "1.10"   # Data-parallel iterators (replaces OpenMP)
+rayon        = "1.10"
 ndarray      = { version = "0.16", features = ["rayon"] }
 num-traits   = "0.2"
 serde        = { version = "1", features = ["derive"] }
@@ -30,21 +24,36 @@ log          = "0.4"
 env_logger   = "0.11"
 thiserror    = "2"
 clap         = { version = "4", features = ["derive"] }
-hdf5         = { version = "0.8", optional = true }   # output (optional)
-fftw         = { version = "0.8", optional = true }   # FFT for IC / PM
+rustfft      = { version = "6", optional = true }
+hdf5         = { version = "0.8", optional = true }
+
+[dev-dependencies]
+approx     = "0.5"
+criterion  = { version = "0.5", features = ["html_reports"] }
 
 [features]
-default     = []
-symmetron   = []   # Compile-in Symmetron scalar field
-fofr        = []   # Compile-in f(R) gravity
+default     = ["fft_pm"]
+symmetron   = []
+fofr        = []
 hdf5_output = ["hdf5"]
-fft_pm      = ["fftw"]
+fft_pm      = ["rustfft"]
+
+[[bench]]
+name = "bench_gravity"
+harness = false
+
+[[bench]]
+name = "bench_cic"
+harness = false
 
 [profile.release]
-opt-level   = 3
-lto         = "fat"
+opt-level     = 3
+lto           = "fat"
 codegen-units = 1
-panic       = "abort"
+panic         = "abort"
 
 [profile.dev]
-opt-level   = 1
+opt-level = 1
+
+[profile.test]
+opt-level = 2

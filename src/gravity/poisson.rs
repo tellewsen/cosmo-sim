@@ -1,0 +1,533 @@
+//! Poisson solver for  ∇²Φ = S  on a periodic uniform grid.
+//!
+//! # Backends
+//!
+//! 1. **FFT-based** (`solve_poisson_fft`, feature `fft_pm`) — exact for
+//!    periodic uniform grids; O(N log N).  Primary solver for the PM step.
+//!
+//! 2. **Multigrid V-cycle** (`solve_poisson_mg`) — always available.
+//!    Red-black GS smoothing + injection/trilinear prolongation
+//!    (Guillet & Teyssier 2011). Used for AMR patches and scalar-field
+//!    sub-problems where FFT doesn't apply.
+//!
+//! # Grid convention
+//!
+//! C-order (row-major): flat(i,j,k) = i·n² + j·n + k.
+//! All inner loops iterate i→j→k (slowest to fastest) to maximise
+//! cache-line reuse on the k-axis.
+
+use rayon::prelude::*;
+use crate::utils::types::{Real, idx3p, from_flat};
+
+/// Re-export `idx3p` under the legacy names used by `scalar_field`.
+pub use crate::utils::types::idx3p as flat3p;
+pub use crate::utils::types::idx3p as flat3;
+
+// ─── Laplacian stencil (6-point) ──────────────────────────────────────────────
+
+/// Apply the 7-point (6-neighbour) discrete Laplacian to `phi` and subtract
+/// from `rhs`, producing the residual  r = rhs − ∇²phi.
+///
+/// Parallelised over rows (i) so the k-axis inner loop is contiguous in cache.
+pub fn residual(phi: &[Real], rhs: &[Real], dx: Real, n: usize) -> Vec<Real> {
+    let inv_dx2 = 1.0 / (dx * dx);
+    let mut res = vec![0.0_f64; n * n * n];
+    // Parallel over the i-axis; j and k are sequential (cache-friendly)
+    res.par_chunks_mut(n * n).enumerate().for_each(|(i, row)| {
+        let i = i as isize;
+        for j in 0..n as isize {
+            for k in 0..n as isize {
+                let c = idx3p(i, j, k, n);
+                let lap = (phi[idx3p(i+1, j,   k,   n)]
+                         + phi[idx3p(i-1, j,   k,   n)]
+                         + phi[idx3p(i,   j+1, k,   n)]
+                         + phi[idx3p(i,   j-1, k,   n)]
+                         + phi[idx3p(i,   j,   k+1, n)]
+                         + phi[idx3p(i,   j,   k-1, n)]
+                         - 6.0 * phi[c]) * inv_dx2;
+                row[j as usize * n + k as usize] = rhs[c] - lap;
+            }
+        }
+    });
+    res
+}
+
+// ─── Red-black GS sweep ───────────────────────────────────────────────────────
+
+/// One red-black Gauss-Seidel sweep for  ∇²Φ = S.
+///
+/// Reads neighbours from a snapshot taken at entry (thread-safe read).
+/// Updates cells in two passes (even/odd i+j+k parity).
+pub fn gs_sweep(phi: &mut [Real], rhs: &[Real], dx: Real, n: usize) {
+    let inv_dx2 = 1.0 / (dx * dx);
+    let snap = phi.to_vec();
+    for color in 0..2_usize {
+        // Iterate i→j→k for cache locality
+        for i in 0..n as isize {
+            for j in 0..n as isize {
+                // Determine starting k parity for this (i,j) row
+                let k_start = ((i + j) as usize % 2 + color) % 2;
+                let mut k = k_start as isize;
+                while k < n as isize {
+                    let c  = idx3p(i, j, k, n);
+                    let nb = snap[idx3p(i+1, j,   k,   n)]
+                           + snap[idx3p(i-1, j,   k,   n)]
+                           + snap[idx3p(i,   j+1, k,   n)]
+                           + snap[idx3p(i,   j-1, k,   n)]
+                           + snap[idx3p(i,   j,   k+1, n)]
+                           + snap[idx3p(i,   j,   k-1, n)];
+                    phi[c] = (nb - rhs[c] / inv_dx2) / 6.0;
+                    k += 2;
+                }
+            }
+        }
+    }
+}
+
+// ─── Restriction (injection) ──────────────────────────────────────────────────
+
+/// Restrict fine (n³) → coarse ((n/2)³) by injection.
+pub fn restrict_uniform(fine: &[Real], n_fine: usize) -> Vec<Real> {
+    let nc = n_fine / 2;
+    let mut coarse = vec![0.0_f64; nc * nc * nc];
+    coarse.par_chunks_mut(nc * nc).enumerate().for_each(|(i, row)| {
+        let i = i as isize;
+        for j in 0..nc as isize {
+            for k in 0..nc as isize {
+                row[j as usize * nc + k as usize] =
+                    fine[idx3p(2*i, 2*j, 2*k, n_fine)];
+            }
+        }
+    });
+    coarse
+}
+
+// ─── Prolongation (trilinear) ─────────────────────────────────────────────────
+
+/// Prolongate coarse (nc³) → fine (2nc³) by trilinear interpolation.
+pub fn prolongate_uniform(coarse: &[Real], nc: usize) -> Vec<Real> {
+    let nf = nc * 2;
+    let mut fine = vec![0.0_f64; nf * nf * nf];
+    fine.par_chunks_mut(nf * nf).enumerate().for_each(|(fi, row)| {
+        let fi = fi as isize;
+        for fj in 0..nf as isize {
+            for fk in 0..nf as isize {
+                // Fine-cell centre in coarse coordinates
+                let cx = (fi as Real + 0.5) * 0.5 - 0.5;
+                let cy = (fj as Real + 0.5) * 0.5 - 0.5;
+                let cz = (fk as Real + 0.5) * 0.5 - 0.5;
+                let ci = cx.floor() as isize;
+                let cj = cy.floor() as isize;
+                let ck = cz.floor() as isize;
+                let tx = cx - ci as Real;
+                let ty = cy - cj as Real;
+                let tz = cz - ck as Real;
+                let mut val = 0.0_f64;
+                for (di, wx) in [(0_isize, 1.0 - tx), (1, tx)] {
+                    for (dj, wy) in [(0_isize, 1.0 - ty), (1, ty)] {
+                        for (dk, wz) in [(0_isize, 1.0 - tz), (1, tz)] {
+                            val += wx * wy * wz * coarse[idx3p(ci+di, cj+dj, ck+dk, nc)];
+                        }
+                    }
+                }
+                row[fj as usize * nf + fk as usize] = val;
+            }
+        }
+    });
+    fine
+}
+
+// ─── V-cycle ──────────────────────────────────────────────────────────────────
+
+/// One multigrid V-cycle for  ∇²Φ = rhs.  Modifies `phi` in-place.
+pub fn v_cycle(
+    phi:      &mut Vec<Real>,
+    rhs:      &[Real],
+    dx:       Real,
+    n:        usize,
+    n_smooth: usize,
+    min_n:    usize,
+) {
+    for _ in 0..n_smooth { gs_sweep(phi, rhs, dx, n); }
+    if n <= min_n {
+        for _ in 0..4 * n_smooth { gs_sweep(phi, rhs, dx, n); }
+        return;
+    }
+    let res_c = restrict_uniform(&residual(phi, rhs, dx, n), n);
+    let nc    = n / 2;
+    let mut err_c = vec![0.0_f64; nc * nc * nc];
+    v_cycle(&mut err_c, &res_c, dx * 2.0, nc, n_smooth, min_n);
+    let err_f = prolongate_uniform(&err_c, nc);
+    phi.iter_mut().zip(err_f.iter()).for_each(|(p, e)| *p += e);
+    for _ in 0..n_smooth { gs_sweep(phi, rhs, dx, n); }
+}
+
+// ─── Multigrid solver ─────────────────────────────────────────────────────────
+
+/// Solve  ∇²Φ = source  by iterated V-cycles.
+///
+/// Enforces the periodic compatibility condition (zero-mean source and solution).
+pub fn solve_poisson_mg(
+    source:   &[Real],
+    dx:       Real,
+    n:        usize,
+    epsilon:  Real,
+    max_iter: u32,
+    n_smooth: usize,
+) -> Vec<Real> {
+    assert_eq!(source.len(), n * n * n);
+    let src_mean = source.iter().sum::<f64>() / (n * n * n) as f64;
+    let source_zm: Vec<Real> = source.iter().map(|s| s - src_mean).collect();
+    let mut phi = vec![0.0_f64; n * n * n];
+    for iter in 0..max_iter {
+        let res     = residual(&phi, &source_zm, dx, n);
+        let res_max = res.iter().map(|r| r.abs()).fold(0.0_f64, f64::max);
+        log::trace!("MG iter {iter}: |r|_∞ = {res_max:.3e}");
+        if res_max < epsilon { break; }
+        v_cycle(&mut phi, &source_zm, dx, n, n_smooth, 4);
+    }
+    let mean = phi.iter().sum::<f64>() / phi.len() as f64;
+    phi.iter_mut().for_each(|p| *p -= mean);
+    phi
+}
+
+// ─── FFT solver ───────────────────────────────────────────────────────────────
+
+/// Solve  ∇²Φ = S  using the DFT — exact (machine precision) for uniform
+/// periodic grids; O(N log N).  Requires feature `fft_pm`.
+///
+/// The algorithm divides  Ŝ(k) / λ(k)  where
+///   λ(ki,kj,kk) = −(4/dx²) [sin²(πki/n) + sin²(πkj/n) + sin²(πkk/n)]
+/// is the eigenvalue of the 6-point discrete Laplacian.
+#[cfg(feature = "fft_pm")]
+pub fn solve_poisson_fft(source: &[Real], dx: Real, n: usize) -> Vec<Real> {
+    use rustfft::{FftPlanner, num_complex::Complex};
+    use std::f64::consts::PI;
+
+    let n3 = n * n * n;
+    assert_eq!(source.len(), n3);
+
+    let mut data: Vec<Complex<f64>> = source.iter().map(|&s| Complex::new(s, 0.0)).collect();
+    let mut planner = FftPlanner::<f64>::new();
+
+    // 3-D FFT as successive 1-D FFTs along k, j, i axes
+    {
+        let fft = planner.plan_fft_forward(n);
+        for i in 0..n { for j in 0..n {
+            fft.process(&mut data[i*n*n + j*n .. i*n*n + j*n + n]);
+        }}
+    }
+    {
+        let fft = planner.plan_fft_forward(n);
+        let mut col = vec![Complex::new(0.0, 0.0); n];
+        for i in 0..n { for k in 0..n {
+            for j in 0..n { col[j] = data[i*n*n + j*n + k]; }
+            fft.process(&mut col);
+            for j in 0..n { data[i*n*n + j*n + k] = col[j]; }
+        }}
+    }
+    {
+        let fft = planner.plan_fft_forward(n);
+        let mut col = vec![Complex::new(0.0, 0.0); n];
+        for j in 0..n { for k in 0..n {
+            for i in 0..n { col[i] = data[i*n*n + j*n + k]; }
+            fft.process(&mut col);
+            for i in 0..n { data[i*n*n + j*n + k] = col[i]; }
+        }}
+    }
+
+    // Divide by discrete Laplacian eigenvalue
+    let inv_dx2 = 1.0 / (dx * dx);
+    for i in 0..n { for j in 0..n { for k in 0..n {
+        let c = i*n*n + j*n + k;
+        if i == 0 && j == 0 && k == 0 { data[c] = Complex::new(0.0, 0.0); continue; }
+        let si = (PI * i as f64 / n as f64).sin();
+        let sj = (PI * j as f64 / n as f64).sin();
+        let sk = (PI * k as f64 / n as f64).sin();
+        let lambda = -4.0 * inv_dx2 * (si*si + sj*sj + sk*sk);
+        data[c] /= lambda;
+    }}}
+
+    // Inverse FFT along each axis
+    {
+        let ifft = planner.plan_fft_inverse(n);
+        for i in 0..n { for j in 0..n {
+            ifft.process(&mut data[i*n*n + j*n .. i*n*n + j*n + n]);
+        }}
+    }
+    {
+        let ifft = planner.plan_fft_inverse(n);
+        let mut col = vec![Complex::new(0.0, 0.0); n];
+        for i in 0..n { for k in 0..n {
+            for j in 0..n { col[j] = data[i*n*n + j*n + k]; }
+            ifft.process(&mut col);
+            for j in 0..n { data[i*n*n + j*n + k] = col[j]; }
+        }}
+    }
+    {
+        let ifft = planner.plan_fft_inverse(n);
+        let mut col = vec![Complex::new(0.0, 0.0); n];
+        for j in 0..n { for k in 0..n {
+            for i in 0..n { col[i] = data[i*n*n + j*n + k]; }
+            ifft.process(&mut col);
+            for i in 0..n { data[i*n*n + j*n + k] = col[i]; }
+        }}
+    }
+
+    let norm = n3 as f64;
+    let mut phi: Vec<Real> = data.iter().map(|c| c.re / norm).collect();
+    let mean = phi.iter().sum::<f64>() / norm;
+    phi.iter_mut().for_each(|p| *p -= mean);
+    phi
+}
+
+/// Stub when `fft_pm` is disabled: fall back to multigrid.
+#[cfg(not(feature = "fft_pm"))]
+pub fn solve_poisson_fft(source: &[Real], dx: Real, n: usize) -> Vec<Real> {
+    solve_poisson_mg(source, dx, n, 1e-10, 500, 3)
+}
+
+/// Primary solver: FFT when available (faster and exact), multigrid otherwise.
+pub fn solve_poisson(
+    source: &[Real], dx: Real, n: usize,
+    epsilon: Real, max_iter: u32, n_smooth: usize,
+) -> Vec<Real> {
+    #[cfg(feature = "fft_pm")]
+    { solve_poisson_fft(source, dx, n) }
+    #[cfg(not(feature = "fft_pm"))]
+    { solve_poisson_mg(source, dx, n, epsilon, max_iter, n_smooth) }
+}
+
+// ─── Gradient ─────────────────────────────────────────────────────────────────
+
+/// Compute  g = −∇Φ  via 2nd-order centred differences.
+///
+/// Parallelised over the flat cell index.  Returns `[gx, gy, gz]` per cell.
+pub fn grad_phi(phi: &[Real], dx: Real, n: usize) -> Vec<[Real; 3]> {
+    let inv_2dx = 0.5 / dx;
+    let mut g = vec![[0.0_f64; 3]; n * n * n];
+    g.par_iter_mut().enumerate().for_each(|(c, gc)| {
+        let (i, j, k) = from_flat(c, n);
+        let (i, j, k) = (i as isize, j as isize, k as isize);
+        gc[0] = -(phi[idx3p(i+1,j,  k,  n)] - phi[idx3p(i-1,j,  k,  n)]) * inv_2dx;
+        gc[1] = -(phi[idx3p(i,  j+1,k,  n)] - phi[idx3p(i,  j-1,k,  n)]) * inv_2dx;
+        gc[2] = -(phi[idx3p(i,  j,  k+1,n)] - phi[idx3p(i,  j,  k-1,n)]) * inv_2dx;
+    });
+    g
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use std::f64::consts::PI;
+    use crate::utils::types::idx3p;
+
+    fn max_err(a: &[Real], b: &[Real]) -> Real {
+        a.iter().zip(b.iter()).map(|(x,y)| (x-y).abs()).fold(0.0, f64::max)
+    }
+
+    fn make_mode(n: usize, mode: usize) -> (Vec<Real>, Vec<Real>) {
+        let dx = 1.0 / n as Real;
+        let k  = 2.0 * PI * mode as Real;
+        let mut src = vec![0.0_f64; n*n*n];
+        let mut phi = vec![0.0_f64; n*n*n];
+        for i in 0..n as isize { for j in 0..n as isize { for k2 in 0..n as isize {
+            let c = idx3p(i, j, k2, n);
+            let x = (i as Real + 0.5) * dx;
+            let v = (k * x).sin();
+            src[c] = -k * k * v;
+            phi[c] = v;
+        }}}
+        (src, phi)
+    }
+
+    fn sub_mean(v: &[Real]) -> Vec<Real> {
+        let m = v.iter().sum::<f64>() / v.len() as f64;
+        v.iter().map(|x| x - m).collect()
+    }
+
+    // ── Multigrid ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn mg_single_mode_accuracy() {
+        let n = 32_usize; let dx = 1.0/n as Real;
+        let (src, exact) = make_mode(n, 1);
+        let phi = solve_poisson_mg(&src, dx, n, 1e-9, 300, 2);
+        let err = max_err(&sub_mean(&phi), &sub_mean(&exact));
+        println!("MG error: {err:.3e}");
+        assert!(err < 5e-3, "MG error {err:.3e}");
+    }
+
+    #[test]
+    fn mg_convergence_order() {
+        let errs: Vec<Real> = [8_usize, 16, 32].iter().map(|&n| {
+            let dx = 1.0/n as Real;
+            let (src, exact) = make_mode(n, 1);
+            let phi = solve_poisson_mg(&src, dx, n, 1e-10, 500, 3);
+            max_err(&sub_mean(&phi), &sub_mean(&exact))
+        }).collect();
+        let r1 = errs[0]/errs[1]; let r2 = errs[1]/errs[2];
+        println!("MG conv ratios: {r1:.2}, {r2:.2}");
+        assert!(r1 > 2.0 && r2 > 2.0);
+    }
+
+    #[test]
+    fn mg_residual_decreases() {
+        let n = 16_usize; let dx = 1.0/n as Real;
+        let (src, _) = make_mode(n, 1);
+        let src_zm = sub_mean(&src);
+        let mut phi = vec![0.0_f64; n*n*n];
+        let r0 = residual(&phi, &src_zm, dx, n).iter().map(|r|r.abs()).fold(0.0,f64::max);
+        v_cycle(&mut phi, &src_zm, dx, n, 2, 4);
+        let r1 = residual(&phi, &src_zm, dx, n).iter().map(|r|r.abs()).fold(0.0,f64::max);
+        println!("Residual: {r0:.3e} → {r1:.3e}");
+        assert!(r1 < r0);
+    }
+
+    // ── FFT ───────────────────────────────────────────────────────────────────
+
+    #[cfg(feature = "fft_pm")]
+    #[test]
+    fn fft_single_mode_accuracy() {
+        let n = 32_usize; let dx = 1.0/n as Real;
+        let (src, exact) = make_mode(n, 1);
+        let phi = solve_poisson_fft(&src, dx, n);
+        let err = max_err(&sub_mean(&phi), &sub_mean(&exact));
+        println!("FFT error: {err:.3e}");
+        assert!(err < 5e-3, "FFT error {err:.3e}");  // discretisation error O((k*dx)²)
+    }
+
+    #[cfg(feature = "fft_pm")]
+    #[test]
+    fn fft_exact_discrete_residual() {
+        // The FFT solves the DISCRETE Laplacian exactly (residual → machine eps).
+        let n = 16_usize; let dx = 1.0/n as Real;
+        let (src, _) = make_mode(n, 1);
+        let src_zm = sub_mean(&src);
+        let phi = solve_poisson_fft(&src_zm, dx, n);
+        // Check ∇²_disc phi = src_zm
+        let lap: Vec<Real> = (0..n*n*n).map(|c| {
+            let (i,j,k) = from_flat(c, n);
+            let (i,j,k) = (i as isize, j as isize, k as isize);
+            let inv_dx2 = 1.0/(dx*dx);
+            (phi[idx3p(i+1,j,  k,  n)] + phi[idx3p(i-1,j,  k,  n)]
+            +phi[idx3p(i,  j+1,k,  n)] + phi[idx3p(i,  j-1,k,  n)]
+            +phi[idx3p(i,  j,  k+1,n)] + phi[idx3p(i,  j,  k-1,n)]
+            - 6.0*phi[c]) * inv_dx2
+        }).collect();
+        let res_err = max_err(&lap, &src_zm);
+        println!("FFT discrete residual: {res_err:.3e}");
+        assert!(res_err < 1e-9, "residual {res_err:.3e}");
+    }
+
+    #[cfg(feature = "fft_pm")]
+    #[test]
+    fn fft_agrees_with_mg() {
+        let n = 16_usize; let dx = 1.0/n as Real;
+        let (src, _) = make_mode(n, 1);
+        let phi_fft = solve_poisson_fft(&src, dx, n);
+        let phi_mg  = solve_poisson_mg(&src, dx, n, 1e-9, 300, 3);
+        let err = max_err(&sub_mean(&phi_fft), &sub_mean(&phi_mg));
+        println!("FFT vs MG: {err:.3e}");
+        assert!(err < 1e-3);
+    }
+
+    #[cfg(feature = "fft_pm")]
+    #[test]
+    fn fft_linearity() {
+        let n = 8_usize; let dx = 1.0/n as Real;
+        let (s1, _) = make_mode(n, 1); let (s2, _) = make_mode(n, 2);
+        let phi12 = solve_poisson_fft(&s1.iter().zip(s2.iter()).map(|(a,b)|a+b).collect::<Vec<_>>(), dx, n);
+        let phi1  = solve_poisson_fft(&s1, dx, n);
+        let phi2  = solve_poisson_fft(&s2, dx, n);
+        let err = max_err(&phi12, &phi1.iter().zip(phi2.iter()).map(|(a,b)|a+b).collect::<Vec<_>>());
+        assert!(err < 1e-10, "FFT not linear: {err:.3e}");
+    }
+
+    // ── Gradient ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn gradient_accuracy_x() {
+        let n = 64_usize; let dx = 1.0/n as Real; let k = 2.0*PI;
+        let phi: Vec<Real> = (0..n*n*n).map(|c| {
+            let (i,_,_) = from_flat(c, n);
+            (k * (i as Real + 0.5) * dx).sin()
+        }).collect();
+        let g = grad_phi(&phi, dx, n);
+        let err = (0..n*n*n).map(|c| {
+            let (i,_,_) = from_flat(c, n);
+            (g[c][0] - (-k * (k*(i as Real+0.5)*dx).cos())).abs()
+        }).fold(0.0_f64, f64::max);
+        println!("Gradient x-error (n=64): {err:.3e}");
+        assert!(err < 0.015);
+    }
+
+    #[test]
+    fn gradient_convergence_order() {
+        let k = 2.0*PI;
+        let errs: Vec<Real> = [16_usize, 32, 64].iter().map(|&n| {
+            let dx = 1.0/n as Real;
+            let phi: Vec<Real> = (0..n*n*n).map(|c| {
+                let (i,_,_) = from_flat(c, n);
+                (k*(i as Real+0.5)*dx).sin()
+            }).collect();
+            let g = grad_phi(&phi, dx, n);
+            (0..n*n*n).map(|c| {
+                let (i,_,_) = from_flat(c, n);
+                (g[c][0] - (-k*(k*(i as Real+0.5)*dx).cos())).abs()
+            }).fold(0.0_f64, f64::max)
+        }).collect();
+        let r1 = errs[0]/errs[1]; let r2 = errs[1]/errs[2];
+        println!("Gradient conv: {r1:.2}, {r2:.2}");
+        assert!(r1 > 2.5 && r2 > 2.5);
+    }
+
+    #[test]
+    fn gradient_yz_zero_for_x_field() {
+        let n = 16_usize; let dx = 1.0/n as Real; let k = 2.0*PI;
+        let phi: Vec<Real> = (0..n*n*n).map(|c| {
+            let (i,_,_) = from_flat(c, n);
+            (k*(i as Real+0.5)*dx).sin()
+        }).collect();
+        let g = grad_phi(&phi, dx, n);
+        let max_gy = g.iter().map(|gc|gc[1].abs()).fold(0.0,f64::max);
+        let max_gz = g.iter().map(|gc|gc[2].abs()).fold(0.0,f64::max);
+        assert!(max_gy < 1e-14, "gy = {max_gy:.3e}");
+        assert!(max_gz < 1e-14, "gz = {max_gz:.3e}");
+    }
+
+    // ── Restriction / Prolongation ────────────────────────────────────────────
+
+    #[test]
+    fn restrict_constant_field() {
+        let n = 8_usize;
+        let fine = vec![3.14_f64; n*n*n];
+        let coarse = restrict_uniform(&fine, n);
+        assert!(coarse.iter().all(|&c| (c - 3.14).abs() < 1e-12));
+    }
+
+    #[test]
+    fn restrict_injection_values() {
+        let n = 8_usize;
+        let fine: Vec<Real> = (0..n*n*n).map(|c| c as Real).collect();
+        let coarse = restrict_uniform(&fine, n);
+        let nc = n/2;
+        for i in 0..nc as isize { for j in 0..nc as isize { for k in 0..nc as isize {
+            let expected = fine[idx3p(2*i, 2*j, 2*k, n)];
+            let got      = coarse[idx3p(i, j, k, nc)];
+            assert!((got - expected).abs() < 1e-14, "({i},{j},{k}): {got} ≠ {expected}");
+        }}}
+    }
+
+    #[test]
+    fn prolongate_constant_roundtrip() {
+        let n = 8_usize;
+        let fine_in = vec![2.71_f64; n*n*n];
+        let coarse  = restrict_uniform(&fine_in, n);
+        let fine_out = prolongate_uniform(&coarse, n/2);
+        let err = max_err(&fine_in, &fine_out);
+        assert!(err < 1e-12, "Constant roundtrip error: {err:.3e}");
+    }
+}

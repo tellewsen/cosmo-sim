@@ -98,8 +98,8 @@ impl Simulation {
         for i in 0..np {
             let b = i * 6 * 8;
             let r = |off: usize| f64::from_le_bytes(buf[b+off..b+off+8].try_into().unwrap());
-            self.particles.x[i] = [r(0),  r(8),  r(16)];
-            self.particles.v[i] = [r(24), r(32), r(40)];
+            self.particles.pos[i] = [r(0),  r(8),  r(16)];
+            self.particles.vel[i] = [r(24), r(32), r(40)];
         }
         log::info!("Loaded {} particles from '{path}'", np);
         Ok(())
@@ -131,7 +131,7 @@ impl Simulation {
 
             // ── Poisson solver ────────────────────────────────────────────
             let g_cfg    = &self.config.gravity;
-            // Source:  4πG ρ_comoving  (RAMSES: 3/2 Ω_m / a³ × δ)
+            // Source:  3/2 Ω_m / a × δ  (RAMSES convention)
             let prefac: Real = 1.5 * self.cosmology.omega_m
                                / (self.a * self.a * self.a);
             let source: Vec<Real> = rho.iter().map(|r| prefac * (r - 1.0)).collect();
@@ -201,10 +201,8 @@ impl Simulation {
                 max_iter:   150,
                 n_smooth:   2,
             };
-            solve_symmetron(
-                &mut self.chi, &mut self.chi_dot,
-                rho, self.a, self.dtau, dx, n, &p, &self.cosmology,
-            );
+            let chi_new = solve_symmetron(rho, self.a, dx, n, &p);
+            self.chi.copy_from_slice(&chi_new);
             let f5 = fifth_force_grid(&self.chi, dx, n, self.a, &p);
             self.grid.set_domain_scalar(&self.chi);
             return Some(f5);
@@ -219,7 +217,8 @@ impl Simulation {
                 max_iter: 150,
                 n_smooth: 2,
             };
-            solve_fofr(&mut self.chi, rho, self.a, dx, n, &p, &self.cosmology);
+            let chi_new = solve_fofr(rho, self.a, dx, n, &p, &self.cosmology);
+            self.chi.copy_from_slice(&chi_new);
             let f5 = fofr_fifth_force(&self.chi, dx, n);
             self.grid.set_domain_scalar(&self.chi);
             return Some(f5);
@@ -232,7 +231,7 @@ impl Simulation {
 
     fn compute_dtau(&self) -> Real {
         // CFL: Δτ < courant * dx / v_max
-        let v_max: Real = self.particles.v.iter()
+        let v_max: Real = self.particles.vel.iter()
             .flat_map(|v| v.iter().copied())
             .map(f64::abs)
             .fold(0.0_f64, f64::max)
@@ -259,7 +258,7 @@ impl Simulation {
 
     /// Write a binary snapshot.
     ///
-    /// Format: [step: u64][a: f64][n_part: u64][x0..][v0..]...
+    /// Format: [step: u64][a: f64][n_part: u64] then for each particle [x,y,z,vx,vy,vz].
     pub fn write_snapshot(&self, idx: usize) {
         use std::io::Write;
         let dir  = &self.config.output.outdir;
@@ -272,8 +271,8 @@ impl Simulation {
         let np = self.particles.n as u64;
         f.write_all(&np.to_le_bytes()).unwrap();
         for i in 0..self.particles.n {
-            for d in 0..3 { f.write_all(&self.particles.x[i][d].to_le_bytes()).unwrap(); }
-            for d in 0..3 { f.write_all(&self.particles.v[i][d].to_le_bytes()).unwrap(); }
+            for d in 0..3 { f.write_all(&self.particles.pos[i][d].to_le_bytes()).unwrap(); }
+            for d in 0..3 { f.write_all(&self.particles.vel[i][d].to_le_bytes()).unwrap(); }
         }
         log::info!("Snapshot {idx:04} written → {path}  (a={:.5})", self.a);
     }
@@ -284,26 +283,20 @@ impl Simulation {
         let mut f   = std::fs::File::open(path)?;
         let mut buf = [0u8; 8];
 
-        let read_u64 = |f: &mut std::fs::File, b: &mut [u8; 8]| -> u64 {
-            f.read_exact(b).unwrap();
-            u64::from_le_bytes(*b)
-        };
-        let read_f64 = |f: &mut std::fs::File, b: &mut [u8; 8]| -> f64 {
-            f.read_exact(b).unwrap();
-            f64::from_le_bytes(*b)
-        };
+        macro_rules! read_u64 { () => {{ f.read_exact(&mut buf)?; u64::from_le_bytes(buf) }} }
+        macro_rules! read_f64 { () => {{ f.read_exact(&mut buf)?; f64::from_le_bytes(buf) }} }
 
-        let step   = read_u64(&mut f, &mut buf);
-        let a      = read_f64(&mut f, &mut buf);
-        let np     = read_u64(&mut f, &mut buf) as usize;
+        let step = read_u64!();
+        let a    = read_f64!();
+        let np   = read_u64!() as usize;
 
-        let mut sim     = Simulation::new(config);
-        sim.step        = step;
-        sim.a           = a;
+        let mut sim = Simulation::new(config);
+        sim.step    = step;
+        sim.a       = a;
 
         for i in 0..np {
-            for d in 0..3 { sim.particles.x[i][d] = read_f64(&mut f, &mut buf); }
-            for d in 0..3 { sim.particles.v[i][d] = read_f64(&mut f, &mut buf); }
+            for d in 0..3 { sim.particles.pos[i][d] = read_f64!(); }
+            for d in 0..3 { sim.particles.vel[i][d] = read_f64!(); }
         }
         log::info!("Restarted from '{path}': step={step}, a={a:.5}");
         Ok(sim)
