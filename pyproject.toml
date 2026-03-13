@@ -13,7 +13,8 @@ dependencies = [
 plot-isis = "analysis.plot_isis:main"
 
 [tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "ipython>=8",
     "jupyter>=1",
 ]
