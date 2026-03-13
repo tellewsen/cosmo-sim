@@ -152,9 +152,13 @@ impl Simulation {
 
             // ── Poisson solver ────────────────────────────────────────────
             let g_cfg    = &self.config.gravity;
-            // Source:  3/2 Ω_m / a × δ  (RAMSES convention)
-            let prefac: Real = 1.5 * self.cosmology.omega_m
-                               / (self.a * self.a * self.a);
+            // Source:  (3/2) H₀² Ω_m / a × δ
+            // With τ = cosmic time t, positions in Mpc/h, velocities in km/s:
+            //   ∇²Φ = (3/2) (100 km/s/(Mpc/h))² Ω_m / a × δ
+            // H₀ = 100 km/s/(Mpc/h) → H₀² = 10 000 (km/s)²/(Mpc/h)²
+            const H0_CODE: Real = 100.0;   // km/s / (Mpc/h)
+            let prefac: Real = 1.5 * H0_CODE * H0_CODE
+                               * self.cosmology.omega_m / self.a;
             let source: Vec<Real> = rho.iter().map(|r| prefac * (r - 1.0)).collect();
             let phi = solve_poisson(
                 &source, dx, n,

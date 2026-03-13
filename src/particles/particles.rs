@@ -76,7 +76,10 @@ impl Particles {
             });
     }
 
-    /// **Kick** step:  ṽ += a (g_grav + g_fifth) Δτ.
+    /// **Kick** step:  ṽ += (g_grav + g_fifth) Δτ.
+    ///
+    /// With τ = t (cosmic time) and ṽ = a² dx/dt, the equation of motion is
+    /// dṽ/dt = -∇Φ, so the kick is simply  ṽ += g × Δτ  (no extra factor of a).
     ///
     /// `fifth_accel` may be `None` for pure Newtonian runs.
     pub fn kick(
@@ -86,14 +89,14 @@ impl Particles {
         dtau:        Real,
         a:           Real,
     ) {
-        let a_dtau = a * dtau;
+        let _ = a;  // τ = cosmic time: kick has no extra a factor
         self.vel.par_iter_mut()
             .enumerate()
             .for_each(|(i, vi)| {
                 for d in 0..3 {
-                    vi[d] += grav_accel[i][d] * a_dtau;
+                    vi[d] += grav_accel[i][d] * dtau;
                     if let Some(fa) = fifth_accel {
-                        vi[d] += fa[i][d] * a_dtau;
+                        vi[d] += fa[i][d] * dtau;
                     }
                 }
             });
@@ -333,16 +336,16 @@ pub mod tests {
 
     #[test]
     fn kick_correct_dv() {
-        // Δṽ = a * F * dtau = 0.5 * 2.0 * 0.1 = 0.1
+        // Δṽ = F * dtau  (no factor of a: dṽ/dt = g)
         let n = 3_usize;
         let mut p = Particles::new(n, 1.0, 10.0);
         let forces: Vec<[Real; 3]> = vec![[2.0, -1.0, 0.5]; n];
         let a = 0.5_f64; let dtau = 0.1_f64;
         p.kick(&forces, None, dtau, a);
         for vi in &p.vel {
-            assert!((vi[0] - a*2.0*dtau).abs() < 1e-15, "vx mismatch");
-            assert!((vi[1] - a*(-1.0)*dtau).abs() < 1e-15, "vy mismatch");
-            assert!((vi[2] - a*0.5*dtau).abs() < 1e-15, "vz mismatch");
+            assert!((vi[0] - 2.0*dtau).abs() < 1e-15, "vx mismatch");
+            assert!((vi[1] - (-1.0)*dtau).abs() < 1e-15, "vy mismatch");
+            assert!((vi[2] - 0.5*dtau).abs() < 1e-15, "vz mismatch");
         }
     }
 
