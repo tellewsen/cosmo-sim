@@ -257,8 +257,11 @@ fn _gen_fft(
                 let k_m = k_f * m2.sqrt();
                 let pk  = a_s * power_unnorm(k_m, cosmo.n_s, gamma);
 
-                // δ̂[k] = buf[k] × sqrt(P(k)/V)
-                let delta = buf[c] * (pk / vol).sqrt();
+                // δ̂[k] = buf[k] × sqrt(N³ P(k)/V)
+                // buf has E[|buf|²]=N³ (unnormalized FFT of iid N(0,1));
+                // the power estimator V/N⁶ × |δ̂|² needs E[|δ̂|²]=N⁶ P/V,
+                // so the amplitude factor is sqrt(N³ P/V).
+                let delta = buf[c] * (pk * n3 as f64 / vol).sqrt();
 
                 // −i × delta × (m_d / (k_f m²)):
                 //   −i (re + i·im) × s  =  (im·s) + i·(−re·s)
