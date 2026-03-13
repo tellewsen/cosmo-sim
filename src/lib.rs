@@ -30,6 +30,10 @@ pub mod ic {
     pub mod zeldovich;
 }
 
+pub mod analysis {
+    pub mod power_spectrum;
+}
+
 pub mod simulation;
 
 // Top-level re-exports used by main.rs and integration tests

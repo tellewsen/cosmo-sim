@@ -278,16 +278,18 @@ impl Simulation {
 
     // ── Snapshot I/O ──────────────────────────────────────────────────────────
 
-    /// Write a binary snapshot.
+    /// Write a binary snapshot **and** a companion power spectrum text file.
     ///
-    /// Format: [step: u64][a: f64][n_part: u64] then for each particle [x,y,z,vx,vy,vz].
+    /// Snapshot format: [step: u64][a: f64][n_part: u64] then for each particle [x,y,z,vx,vy,vz].
+    /// Power spectrum: `power_spectrum_{idx:04}.txt`, space-separated k / P(k) / N_modes.
     pub fn write_snapshot(&self, idx: usize) {
         use std::io::Write;
         let dir  = &self.config.output.outdir;
         std::fs::create_dir_all(dir).expect("Cannot create output directory");
-        let path = format!("{dir}/snapshot_{idx:04}.bin");
-        let mut f = std::fs::File::create(&path).expect("Cannot create snapshot file");
 
+        // ── Binary snapshot ──────────────────────────────────────────────
+        let snap_path = format!("{dir}/snapshot_{idx:04}.bin");
+        let mut f = std::fs::File::create(&snap_path).expect("Cannot create snapshot file");
         f.write_all(&self.step.to_le_bytes()).unwrap();
         f.write_all(&self.a.to_le_bytes()).unwrap();
         let np = self.particles.n as u64;
@@ -296,7 +298,21 @@ impl Simulation {
             for d in 0..3 { f.write_all(&self.particles.pos[i][d].to_le_bytes()).unwrap(); }
             for d in 0..3 { f.write_all(&self.particles.vel[i][d].to_le_bytes()).unwrap(); }
         }
-        log::info!("Snapshot {idx:04} written → {path}  (a={:.5})", self.a);
+        log::info!("Snapshot {idx:04} written → {snap_path}  (a={:.5})", self.a);
+
+        // ── Power spectrum ────────────────────────────────────────────────
+        use crate::analysis::power_spectrum::compute_power_spectrum;
+        let n_grid = self.config.run.n_grid as usize;
+        let ps = compute_power_spectrum(
+            &self.particles,
+            n_grid,
+            self.a,
+            self.step,
+            40,    // 40 log-spaced k bins
+            true,  // subtract shot-noise
+        );
+        let pk_path = format!("{dir}/power_spectrum_{idx:04}.txt");
+        ps.write(&pk_path);
     }
 
     /// Read back a snapshot (for restart).

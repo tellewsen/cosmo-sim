@@ -1,0 +1,19 @@
+[project]
+name = "rustis-analysis"
+version = "0.1.0"
+description = "Analysis and plotting tools for the RUSTIS cosmological N-body simulation"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "matplotlib>=3.8",
+    "scipy>=1.12",   # optional: smoothing in density slice plots
+]
+
+[project.scripts]
+plot-isis = "analysis.plot_isis:main"
+
+[tool.uv]
+dev-dependencies = [
+    "ipython>=8",
+    "jupyter>=1",
+]
