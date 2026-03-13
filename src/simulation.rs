@@ -86,6 +86,26 @@ impl Simulation {
         }
     }
 
+    /// Generate Zel'dovich approximation initial conditions in-place.
+    ///
+    /// Calls [`crate::ic::zeldovich::generate_zeldovich`] and writes the result
+    /// directly into `self.particles.pos` and `self.particles.vel`.
+    ///
+    /// `seed` controls the random realisation; the same seed always produces
+    /// the same field.  Use `seed = 42` for reproducible runs.
+    pub fn generate_ic(&mut self, seed: u64) {
+        use crate::ic::zeldovich::generate_zeldovich;
+        let n_p      = self.config.particles.n_part as usize;
+        let box_size = self.config.run.box_size;
+        let (pos, vel) = generate_zeldovich(n_p, box_size, self.a, &self.cosmology, seed);
+        assert_eq!(pos.len(), self.particles.n,
+            "IC generator produced {} positions but particles.n = {}",
+            pos.len(), self.particles.n);
+        self.particles.pos = pos;
+        self.particles.vel = vel;
+        log::info!("Generated Zel'dovich IC: {} particles, seed={}", self.particles.n, seed);
+    }
+
     /// Load particle initial conditions from a raw binary dump.
     ///
     /// Format: N_part × 6 × f64 LE, each particle as [x,y,z,vx,vy,vz].

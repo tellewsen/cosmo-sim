@@ -26,6 +26,10 @@ pub mod amr {
     pub mod grid;
 }
 
+pub mod ic {
+    pub mod zeldovich;
+}
+
 pub mod simulation;
 
 // Top-level re-exports used by main.rs and integration tests

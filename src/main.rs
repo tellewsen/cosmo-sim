@@ -25,8 +25,13 @@ enum Commands {
     Run {
         #[arg(short, long, default_value = "params.toml")]
         params: String,
-        #[arg(short = 'i', long, help = "Path to initial conditions binary")]
+        #[arg(short = 'i', long, help = "Path to initial conditions binary (N×6 f64 LE)")]
         ic: Option<String>,
+        #[arg(
+            short = 's', long, default_value = "42",
+            help = "Random seed for Zel'dovich IC generator (used when --ic is omitted)"
+        )]
+        seed: u64,
     },
     /// Write an example parameter file and exit
     Init {
@@ -50,7 +55,7 @@ fn main() {
             println!("Edit it, then run:  cosmo_sim run --params {params}");
         }
 
-        Commands::Run { params, ic } => {
+        Commands::Run { params, ic, seed } => {
             let cfg = Config::from_file(&params)
                 .unwrap_or_else(|e| {
                     eprintln!("Error reading {params}: {e}");
@@ -67,7 +72,8 @@ fn main() {
                         std::process::exit(1);
                     });
             } else {
-                log::warn!("No IC file specified. Particles start at rest — for testing only.");
+                log::info!("No IC file given — generating Zel'dovich IC (seed={seed})");
+                sim.generate_ic(seed);
             }
 
             sim.run();
