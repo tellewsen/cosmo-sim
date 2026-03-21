@@ -146,19 +146,24 @@ impl Simulation {
             // ── ½ Drift ────────────────────────────────────────────────────
             self.particles.drift(self.dtau * 0.5, self.a);
 
+            // Scale factor at the half-step midpoint, used for force evaluation
+            // and the second drift.  Using a_start here instead of a_half causes
+            // ~7× excess power growth when Δa/a is large (e.g. the first step).
+            let a_half = self.cosmology.advance_a(self.a, self.dtau * 0.5);
+
             // ── Density assignment ─────────────────────────────────────────
             let rho = self.particles.cic_density(n);
             self.grid.set_domain_rho(&rho);
 
             // ── Poisson solver ────────────────────────────────────────────
             let g_cfg    = &self.config.gravity;
-            // Source:  (3/2) H₀² Ω_m / a × δ
+            // Source:  (3/2) H₀² Ω_m / a_half × δ  (evaluated at half-step)
             // With τ = cosmic time t, positions in Mpc/h, velocities in km/s:
             //   ∇²Φ = (3/2) (100 km/s/(Mpc/h))² Ω_m / a × δ
             // H₀ = 100 km/s/(Mpc/h) → H₀² = 10 000 (km/s)²/(Mpc/h)²
             const H0_CODE: Real = 100.0;   // km/s / (Mpc/h)
             let prefac: Real = 1.5 * H0_CODE * H0_CODE
-                               * self.cosmology.omega_m / self.a;
+                               * self.cosmology.omega_m / a_half;
             let source: Vec<Real> = rho.iter().map(|r| prefac * (r - 1.0)).collect();
             let phi = solve_poisson(
                 &source, dx, n,
@@ -187,7 +192,9 @@ impl Simulation {
             );
 
             // ── ½ Drift ────────────────────────────────────────────────────
-            self.particles.drift(self.dtau * 0.5, self.a);
+            // Use a_half: x advances from τ+Δτ/2 to τ+Δτ, so the factor 1/a²
+            // should be evaluated at τ+Δτ/2, not the step start.
+            self.particles.drift(self.dtau * 0.5, a_half);
 
             // ── Advance a ─────────────────────────────────────────────────
             self.a = self.cosmology.advance_a(self.a, self.dtau);
@@ -265,7 +272,12 @@ impl Simulation {
         let n   = self.config.run.n_grid as Real;
         let dx  = self.config.run.box_size / n;
         let cfl = self.config.run.courant_factor * dx / v_max;
-        cfl.min(self.config.run.dtau_max)
+
+        // Scale-factor CFL: limit Δa/a ≤ 0.02 to keep a_half accurate.
+        // da/dτ = a H(a), so Δτ_max = 0.02 / H(a).
+        let cfl_a = 0.02 / self.cosmology.hubble(self.a);
+
+        cfl.min(self.config.run.dtau_max).min(cfl_a)
     }
 
     // ── Output schedule ───────────────────────────────────────────────────────
