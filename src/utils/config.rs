@@ -14,6 +14,7 @@ use crate::utils::types::Real;
 pub struct Config {
     pub run:          RunParams,
     pub cosmology:    CosmoParams,
+    #[serde(default)]
     pub gravity:      GravityParams,
     pub particles:    ParticleParams,
     #[serde(default)]
@@ -111,6 +112,7 @@ pub struct OutputParams {
     /// Output snapshot scale factors (overrides n_output if set)
     pub a_out:        Option<Vec<Real>>,
     /// Write HDF5 (requires hdf5_output feature)
+    #[serde(default)]
     pub hdf5:         bool,
 }
 

@@ -69,9 +69,7 @@ impl Particles {
             .for_each(|(xi, vi)| {
                 for d in 0..3 {
                     xi[d] += vi[d] * dtau_half * inv_a2;
-                    // Inline periodic wrap (branch-free for most cases)
-                    if xi[d] < 0.0 { xi[d] += l; }
-                    if xi[d] >= l  { xi[d] -= l; }
+                    xi[d] = xi[d].rem_euclid(l);
                 }
             });
     }
@@ -95,7 +93,9 @@ impl Particles {
             .for_each(|(i, vi)| {
                 for d in 0..3 {
                     vi[d] += grav_accel[i][d] * dtau;
-                    if let Some(fa) = fifth_accel {
+                }
+                if let Some(fa) = fifth_accel {
+                    for d in 0..3 {
                         vi[d] += fa[i][d] * dtau;
                     }
                 }
@@ -116,10 +116,9 @@ impl Particles {
     pub fn cic_density(&self, ng: usize) -> Vec<Real> {
         let dx_inv = ng as Real / self.box_size;
         let n3     = ng * ng * ng;
-        let mut rho = vec![0.0_f64; n3];
 
         // Thread-local accumulation using rayon fold + reduce
-        let rho_par: Vec<Real> = self.pos.par_iter()
+        let mut rho: Vec<Real> = self.pos.par_iter()
             .fold(
                 || vec![0.0_f64; n3],
                 |mut local, xi| {
@@ -153,12 +152,9 @@ impl Particles {
                 |mut a, b| { a.iter_mut().zip(b.iter()).for_each(|(x, y)| *x += y); a },
             );
 
-        rho.iter_mut().zip(rho_par.iter()).for_each(|(r, rp)| *r = *rp);
-
         // Normalise: divide by mean so that <ρ/ρ̄> = 1
-        let n3_f = n3 as Real;
-        let n_part = self.n as Real;
-        rho.iter_mut().for_each(|r| *r *= n3_f / n_part);
+        let scale = n3 as Real / self.n as Real;
+        rho.iter_mut().for_each(|r| *r *= scale);
         rho
     }
 

@@ -156,8 +156,11 @@ fn fofr_ngs_sweep(
                     let dsrc  = dfofr_source_du(u_c, r_u, p);
                     let lap   = (nb - 6.0 * u_c) * inv_dx2;
                     let denom = -6.0 * inv_dx2 - dsrc;
-                    // Enforce physical bound: f_R ≤ 0 for Hu-Sawicki
-                    u[c] = (u_c - (lap - src) / denom).min(0.0);
+                    // Enforce physical bound: f_R ≤ 0 for Hu-Sawicki.
+                    // Guard against degenerate Jacobian (near u → 0⁻).
+                    if denom.abs() > 1e-30 {
+                        u[c] = (u_c - (lap - src) / denom).min(0.0);
+                    }
                     k += 2;
                 }
             }
@@ -267,7 +270,6 @@ pub fn solve_fofr(
     let rbar_a = r_bar(a, cosmo);
     let bg_val = fofr_of_r(r0, r0, p);
     let mut u  = vec![bg_val; n * n * n];
-    let _depth = (n as f64).log2() as usize;
 
     for iter in 0..p.max_iter {
         let res     = fofr_residual(&u, rho, a, dx, n, r0, rbar_a, p, cosmo);

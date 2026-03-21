@@ -105,9 +105,10 @@ impl AmrGrid {
         let n3   = n_us * n_us * n_us;
         let mut cells = Vec::with_capacity(n3 * 2);
 
-        for k in 0..n_us {
+        // C-order (row-major): flat index = i*n² + j*n + k → loop i (slow) → k (fast)
+        for i in 0..n_us {
             for j in 0..n_us {
-                for i in 0..n_us {
+                for k in 0..n_us {
                     cells.push(Cell {
                         pos: [
                             (i as Real + 0.5) * dx,

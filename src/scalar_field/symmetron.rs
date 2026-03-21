@@ -276,9 +276,10 @@ pub fn fifth_force_grid(
 ) -> Vec<[Real; 3]> {
     use crate::gravity::poisson::grad_phi;
     let grad = grad_phi(chi, dx, n);
-    let factor = p.beta_0 / a;  // Note: +∇χ gives repulsion in broken phase toward vacuum
+    // grad_phi returns −∇χ (negative gradient, like gravitational acceleration).
+    // The fifth force is a_5 = (β₀/a) ∇χ, so negate to recover +∇χ.
+    let factor = -p.beta_0 / a;
     grad.into_iter().map(|g| [factor * g[0], factor * g[1], factor * g[2]]).collect()
-    // Note: grad_phi returns -∇Φ; for χ we want +∇χ so we negate the sign
 }
 
 /// Fifth force at particle positions (interpolated from grid).
@@ -507,9 +508,9 @@ pub mod tests {
         let c_quarter = idx3p((n/4) as isize, 0, 0, n);
         let fx = f5[c_quarter][0];
         println!("Fifth force x-component at L/4: {fx:.4}");
-        // At x=L/4: cos is decreasing → ∂χ/∂x < 0 → force (= β/a · ∂χ/∂x) < 0
-        // (sign depends on definition; just check it's non-zero with right sign)
-        assert!(fx.abs() > 0.1, "Fifth force too small: {fx:.4}");
+        // At x=L/4: χ = cos(2πx/L) is decreasing → ∂χ/∂x < 0
+        // → fifth force = (β₀/a) ∂χ/∂x < 0 (points in −x direction)
+        assert!(fx < -0.1, "Fifth force should be negative at x=L/4: {fx:.4}");
     }
 
     // ── Non-static placeholder ────────────────────────────────────────────────

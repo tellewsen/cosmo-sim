@@ -56,6 +56,9 @@ pub fn residual(phi: &[Real], rhs: &[Real], dx: Real, n: usize) -> Vec<Real> {
 /// Updates cells in two passes (even/odd i+j+k parity).
 pub fn gs_sweep(phi: &mut [Real], rhs: &[Real], dx: Real, n: usize) {
     let inv_dx2 = 1.0 / (dx * dx);
+    // Snapshot taken once so all neighbour reads use pre-sweep values.
+    // This gives a parallel-safe Jacobi-style update across both color passes,
+    // which has well-characterised high-frequency damping for the V-cycle.
     let snap = phi.to_vec();
     for color in 0..2_usize {
         // Iterate i→j→k for cache locality
