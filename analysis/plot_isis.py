@@ -216,7 +216,7 @@ def plot_delta_pk(lcdm_dir, mg_dir, label="Modified gravity",
 
 # ─── Figure 3 — Projected density field ─────────────────────────────────────
 
-def plot_density_slice(outdir, ax=None, n_grid=256, a_target=1.0):
+def plot_density_slice(outdir, ax=None, n_grid=256, a_target=1.0, box_size=64.0):
     """Plot 2-D projected (column-density) overdensity from the last snapshot.
 
     Projects all particles onto the x-y plane using a CIC-smoothed grid,
@@ -224,7 +224,7 @@ def plot_density_slice(outdir, ax=None, n_grid=256, a_target=1.0):
     """
     snap_path, a = find_snapshot_at(outdir, a_target)
     _, a, pos, _ = read_snapshot(snap_path)
-    box = pos.max()   # approximate box size from positions
+    box = box_size   # comoving box side length [Mpc/h]
 
     # 2-D CIC projection onto n_grid × n_grid
     dx = box / n_grid
@@ -256,13 +256,16 @@ def plot_density_slice(outdir, ax=None, n_grid=256, a_target=1.0):
     else:
         standalone = False
 
-    vmin, vmax = 0.1, grid.max() * 0.7
+    vmin = np.log10(0.1 + 0.1)
+    vmax = np.log10(grid.max() * 0.7 + 0.1)
     im = ax.imshow(
         np.log10(grid.T + 0.1),
         origin="lower",
         extent=[0, box, 0, box],
         cmap="inferno",
         aspect="equal",
+        vmin=vmin,
+        vmax=vmax,
     )
     plt.colorbar(im, ax=ax, label=r"$\log_{10}(1+\delta)$", fraction=0.046, pad=0.04)
     ax.set_xlabel("x  [Mpc/h]", fontsize=12)

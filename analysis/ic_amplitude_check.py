@@ -25,7 +25,7 @@ def bbks(k):
 bbks_v = np.vectorize(bbks)
 
 def power_unnorm(k):
-    return k**n_s * bbks_v(k, )**2
+    return k**n_s * bbks_v(k)**2
 
 # Normalise
 k_arr = np.logspace(-4, 2, 10000)
@@ -64,8 +64,8 @@ k_int = np.logspace(np.log10(k_fund), np.log10(k_nyq), 5000)
 P_z0 = A_s * power_unnorm(k_int)
 P_init = D_init**2 * P_z0
 
-sigma2_init = np.trapezoid(P_init * k_int**2, np.log(k_int)) / (2*np.pi**2)
-sigma2_z0   = np.trapezoid(P_z0 * k_int**2, np.log(k_int)) / (2*np.pi**2)
+sigma2_init = np.trapz(P_init * k_int**2, np.log(k_int)) / (2*np.pi**2)
+sigma2_z0   = np.trapz(P_z0 * k_int**2, np.log(k_int)) / (2*np.pi**2)
 
 print(f"\nExpected real-space delta_rms (no smoothing, k_fund to k_nyq):")
 print(f"  at a=0.02: {np.sqrt(sigma2_init):.4f}")

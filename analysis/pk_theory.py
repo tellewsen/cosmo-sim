@@ -2,7 +2,9 @@
 
 Usage: uv run python analysis/pk_theory.py [snapshot_dir] [n_grid] [box_size_Mpc/h]
 """
+import os
 import sys
+import glob
 import struct
 import numpy as np
 
@@ -89,15 +91,14 @@ for a_test in [0.02, 0.33, 0.5, 0.67, 0.82, 1.0]:
           f"delta_rms ~ sigma8*D = {sigma8*D:.4f}")
 
 # ── Read snapshots and compare ─────────────────────────────────────────────────
-import os
 print(f"\n{'─'*60}")
 print(f"Simulation snapshots vs theory (k_fund = {2*np.pi/L:.4f} h/Mpc):")
 print(f"{'─'*60}")
 
-for i in range(5):
-    snap = f"{snap_dir}/snapshot_{i:04d}.bin"
-    if not os.path.exists(snap):
-        continue
+snap_files = sorted(glob.glob(f"{snap_dir}/snapshot_*.bin"))
+if not snap_files:
+    print(f"No snapshots found in '{snap_dir}' — run the simulation first.")
+for snap in snap_files:
     with open(snap, "rb") as f:
         step   = struct.unpack("<Q", f.read(8))[0]
         a_snap = struct.unpack("<d", f.read(8))[0]
@@ -131,7 +132,8 @@ for i in range(5):
     D = growth_factor(a_snap)
     P_theory_001 = P_lin(2*np.pi/L, D)   # k = k_fundamental
 
-    print(f"snap {i:02d}  a={a_snap:.4f}  D={D:.4f}  "
+    snap_idx = os.path.basename(snap).split("_")[1].split(".")[0]
+    print(f"snap {snap_idx}  a={a_snap:.4f}  D={D:.4f}  "
           f"delta_rms={delta.std():.4f}  "
           f"P_sim[k_f]={P_k001:.2e}  P_theory[k_f]={P_theory_001:.2e}  "
           f"ratio={P_k001/P_theory_001:.3f}  "
