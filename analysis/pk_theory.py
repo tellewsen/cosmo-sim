@@ -178,7 +178,8 @@ for snap in snap_files:
 # a single Fourier mode from the raw snapshot).
 #
 # PASS criteria (matches Winther et al. 2015 standard):
-#   P_sim(k, a) / P_lin(k, a)  within 10% at  k < 0.1 h/Mpc
+#   P_sim(k, a) / P_lin(k, a)  within 10% for the lowest N_LOW_K_BINS modes
+#   below K_MAX_LINEAR h/Mpc (quasi-linear regime).
 #
 if args.growth_test:
     pk_files = sorted(glob.glob(f"{snap_dir}/power_spectrum_*.txt"))
