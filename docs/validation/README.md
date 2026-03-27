@@ -137,9 +137,9 @@ The Winther et al. 2015 paper used 512³ particles (dx ≈ 0.49 Mpc/h < λ₀). 
 
 - [x] Run Winther symmetron sim
 - [x] Run growth test on output_w15_lcdm_test
-- [ ] Run Winther f(R) F5 sim (in progress, ~2h)
-- [ ] Run Winther f(R) F6 sim (queued after F5)
-- [ ] Generate ΔP/P figures for f(R) models
+- [x] Run Winther f(R) F5 sim (`output_w15_f5_test/`, completed 2026-03-27)
+- [ ] Run Winther f(R) F6 sim — needs fresh run (was killed at step 20, no snapshots written): `cargo build --release --features fofr && ./target/release/cosmo_sim run --params analysis/params/winther2015_f6_test.toml --seed 42`
+- [ ] Generate ΔP/P figures: `uv run python analysis/plot_isis.py --lcdm output_w15_lcdm_test --mg output_w15_f5_test --label "f(R) F5" --outdir figs_winther2015_test/fofr_f5`
 - [ ] Rerun symmetron with 64 Mpc/h box to validate code at dx ≈ λ₀
 - [ ] Fix primary DKD issue (a_half fix validation)
 - [ ] Record all results in ROADMAP.md
