@@ -281,7 +281,13 @@ pub fn solve_fofr(
     u
 }
 
-/// Compute fifth-force acceleration:  F₅ = −(1/2) ∇f_R.
+/// Compute fifth-force acceleration:  a₅ = +(1/2) ∇f_R.
+///
+/// In Hu-Sawicki f(R) gravity the extra acceleration on a test particle is
+///   a₅ = (1/2) ∇f_R
+/// (Llinares, Mota & Winther 2014, A&A 562 A78, eq. 3.3).
+/// Because f_R ≤ 0 is LESS negative at overdensities, ∇f_R points
+/// toward dense regions, making a₅ attractive — consistent with gravity.
 ///
 /// Parallelised over cells; loop order follows the C-order convention.
 pub fn fofr_fifth_force(u: &[Real], dx: Real, n: usize) -> Vec<[Real; 3]> {
@@ -291,9 +297,9 @@ pub fn fofr_fifth_force(u: &[Real], dx: Real, n: usize) -> Vec<[Real; 3]> {
         let (i, j, k) = from_flat(c, n);
         let (i, j, k) = (i as isize, j as isize, k as isize);
         *fc = [
-            -(u[idx3p(i+1, j,   k,   n)] - u[idx3p(i-1, j,   k,   n)]) * inv_4dx,
-            -(u[idx3p(i,   j+1, k,   n)] - u[idx3p(i,   j-1, k,   n)]) * inv_4dx,
-            -(u[idx3p(i,   j,   k+1, n)] - u[idx3p(i,   j,   k-1, n)]) * inv_4dx,
+            (u[idx3p(i+1, j,   k,   n)] - u[idx3p(i-1, j,   k,   n)]) * inv_4dx,
+            (u[idx3p(i,   j+1, k,   n)] - u[idx3p(i,   j-1, k,   n)]) * inv_4dx,
+            (u[idx3p(i,   j,   k+1, n)] - u[idx3p(i,   j,   k-1, n)]) * inv_4dx,
         ];
     });
     f5
@@ -345,5 +351,100 @@ pub mod tests {
         let spread = u.iter().map(|v| (v - bg).abs()).fold(0.0_f64, f64::max);
         println!("f(R) spread around bg: {spread:.3e}");
         assert!(spread < p.fofr0, "Solution drifted too far from background");
+    }
+
+    #[test]
+    fn fofr_screening_high_density() {
+        // In a strongly overdense region the chameleon mechanism forces u → 0.
+        // Physical bound: f_R ≤ 0 must be maintained everywhere.
+        let ng    = 8_usize;
+        let cosmo = Cosmology::default();
+        let p     = FofrParams { fofr0: 1e-5, n: 1.0, epsilon: 1e-8,
+                                 max_iter: 200, n_smooth: 2 };
+        let rho   = vec![1000.0_f64; ng * ng * ng];   // 1000× overdense
+        let u     = solve_fofr(&rho, 1.0, 100.0 / ng as Real, ng, &p, &cosmo);
+        assert!(
+            u.iter().all(|&v| v <= 0.0),
+            "f_R must stay ≤ 0 everywhere; max = {:.3e}",
+            u.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+        );
+    }
+
+    #[test]
+    fn fofr_fifth_force_direction() {
+        // An overdense plane at i=0 has f_R LESS negative (screened) than the
+        // background.  The fifth force a₅ = +(1/2)∇f_R therefore points
+        // TOWARD the overdense plane (attractive).
+        //
+        // At i=1 (right of the spike), ∇f_R points in -x toward the less-negative
+        // peak, so a₅[x] < 0 (toward i=0).  By symmetry at i=ng-1 (left), a₅[x] > 0.
+        //
+        // We use a moderate overdensity so the spike is not fully screened.
+        let ng    = 16_usize;
+        let cosmo = Cosmology::default();
+        let p     = FofrParams { fofr0: 1e-4, n: 1.0, epsilon: 1e-8,
+                                 max_iter: 200, n_smooth: 2 };
+        let dx    = 100.0_f64 / ng as Real;
+        let mut rho = vec![1.0_f64; ng * ng * ng];
+        // Moderate density enhancement along the i=0 plane.
+        for j in 0..ng { for k in 0..ng { rho[j * ng + k] = 5.0; } }
+        let u  = solve_fofr(&rho, 1.0, dx, ng, &p, &cosmo);
+        let f5 = fofr_fifth_force(&u, dx, ng);
+        let j0 = ng / 2;
+        let k0 = ng / 2;
+        // At i=1: force must point toward i=0 (negative x direction).
+        let idx1 = 1 * ng * ng + j0 * ng + k0;
+        assert!(
+            f5[idx1][0] < 0.0,
+            "fifth force at i=1 should point toward density peak at i=0 (-x); got {:.3e}",
+            f5[idx1][0]
+        );
+        // At i=ng-1 (left neighbour under periodic BC): force points in +x.
+        let idx_left = (ng - 1) * ng * ng + j0 * ng + k0;
+        assert!(
+            f5[idx_left][0] > 0.0,
+            "fifth force at i=ng-1 should point toward density peak at i=0 (+x); got {:.3e}",
+            f5[idx_left][0]
+        );
+    }
+
+    #[test]
+    fn fofr_solver_converges_to_background() {
+        // With a mild density perturbation (non-uniform rho), the tight solver
+        // should deviate less from the background value at the unperturbed cells
+        // than the loose solver.  The background value is u₀ = -n·fofr0 = -1e-5.
+        let ng       = 8_usize;
+        let cosmo    = Cosmology::default();
+        let dx       = 100.0_f64 / ng as Real;
+        let expected = -1.0_f64 * 1e-5_f64;   // -n * fofr0
+
+        // Small perturbation: one plane at i=0 is 2× denser, rest uniform.
+        let mut rho = vec![1.0_f64; ng * ng * ng];
+        for j in 0..ng { for k in 0..ng { rho[j * ng + k] = 2.0; } }
+
+        let p_tight = FofrParams { fofr0: 1e-5, n: 1.0, epsilon: 1e-10,
+                                   max_iter: 300, n_smooth: 4 };
+        let p_loose = FofrParams { fofr0: 1e-5, n: 1.0, epsilon: 1e-2,
+                                   max_iter: 2,   n_smooth: 1 };
+
+        let u_tight = solve_fofr(&rho, 1.0, dx, ng, &p_tight, &cosmo);
+        let u_loose = solve_fofr(&rho, 1.0, dx, ng, &p_loose, &cosmo);
+
+        // Measure error only at the unperturbed cells (i != 0).
+        let err = |u: &[Real]| {
+            let cells: Vec<Real> = (1..ng).flat_map(|i| {
+                (0..ng).flat_map(move |j| {
+                    (0..ng).map(move |k| u[i * ng * ng + j * ng + k])
+                })
+            }).collect();
+            cells.iter().map(|&v| (v - expected).abs()).sum::<Real>() / cells.len() as Real
+        };
+        let err_tight = err(&u_tight);
+        let err_loose = err(&u_loose);
+
+        assert!(err_tight <= err_loose,
+            "tight solver should be at least as close to background as loose: tight={err_tight:.3e} loose={err_loose:.3e}");
+        assert!(err_tight < 1e-5 * p_tight.fofr0.abs(),
+            "tight solver should converge near background: err={err_tight:.3e}");
     }
 }
