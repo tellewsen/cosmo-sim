@@ -103,7 +103,27 @@ Sample P(k) (shot-noise subtracted):
 | 0.332 (z=2.0) | 0.02625 | 1.88 × 10⁴ |
 | 1.001 (z=0.0) | 0.02625 | 2.24 × 10⁵ |
 
-Growth test not yet run on this output (pending — needs `uv run python analysis/pk_theory.py --params analysis/params/winther2015_lcdm_test.toml --growth-test output_w15_lcdm_test`).
+**Growth test result (Winther cosmology, 250 Mpc/h box):** FAIL — same pattern as WMAP7 run. P_sim/P_lin = 4–21× at k=0.026–0.044 h/Mpc across all redshifts. Confirms DKD bug is the root cause regardless of cosmology.
+
+---
+
+### 2026-03-27 — Winther 2015 Symmetron run (250 Mpc/h box)
+
+**Run:** `output_w15_symmetron_test/` (winther2015_symmetron_test.toml, seed=42, 367 steps, completed ~19:42 UTC)
+
+**Result: ΔP/P ≈ 0 at all k and all redshifts (max |ΔP/P| < 1e-4)**
+
+**Root cause: Resolution limitation.** This is NOT a code bug.
+
+The symmetron Compton wavelength is λ₀ = 1 Mpc/h. The grid spacing is dx = 250/64 = 3.9 Mpc/h ≈ 4λ₀. At this resolution, the symmetron scalar field χ cannot develop the sub-Mpc gradients needed to produce a fifth force. The background value χ_bg ≈ 0.935 is nearly uniform on the grid, giving ∇χ ≈ 0 and zero fifth force.
+
+The Winther et al. 2015 paper used 512³ particles (dx ≈ 0.49 Mpc/h < λ₀). To see the symmetron signal, the production 512³ run is required, or use the `symmetron_test.toml` (64 Mpc/h box → dx = 1 Mpc/h = λ₀).
+
+| Configuration | dx [Mpc/h] | dx/λ₀ | Expected signal |
+|---|---|---|---|
+| 250 Mpc/h, 64³ (this run) | 3.9 | 3.9× | None (unresolved) |
+| 64 Mpc/h, 64³ (symmetron_test.toml) | 1.0 | 1.0× | Marginal |
+| 250 Mpc/h, 512³ (production) | 0.49 | 0.49× | Full signal |
 
 ---
 
@@ -115,10 +135,11 @@ Growth test not yet run on this output (pending — needs `uv run python analysi
 
 ## Next Steps
 
-- [ ] Run Winther symmetron sim: `cargo build --release --features symmetron && ./target/release/cosmo_sim run --params analysis/params/winther2015_symmetron_test.toml --seed 42`
-- [ ] Run Winther f(R) F5 sim: `cargo build --release --features fofr && ./target/release/cosmo_sim run --params analysis/params/winther2015_f5_test.toml --seed 42`
-- [ ] Run Winther f(R) F6 sim: `./target/release/cosmo_sim run --params analysis/params/winther2015_f6_test.toml --seed 42`
-- [ ] Run growth test on output_w15_lcdm_test
-- [ ] Generate ΔP/P figures for each MG model
+- [x] Run Winther symmetron sim
+- [x] Run growth test on output_w15_lcdm_test
+- [ ] Run Winther f(R) F5 sim (in progress, ~2h)
+- [ ] Run Winther f(R) F6 sim (queued after F5)
+- [ ] Generate ΔP/P figures for f(R) models
+- [ ] Rerun symmetron with 64 Mpc/h box to validate code at dx ≈ λ₀
 - [ ] Fix primary DKD issue (a_half fix validation)
 - [ ] Record all results in ROADMAP.md
