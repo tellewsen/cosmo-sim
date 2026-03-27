@@ -1,24 +1,58 @@
 """Compute theoretical linear P(k) (BBKS) and compare to simulation snapshots.
 
-Usage: uv run python analysis/pk_theory.py [snapshot_dir] [n_grid] [box_size_Mpc/h]
+Usage:
+  uv run python analysis/pk_theory.py [snapshot_dir] [n_grid] [box_size_Mpc/h]
+  uv run python analysis/pk_theory.py --params analysis/params/winther2015_lcdm_test.toml
+  uv run python analysis/pk_theory.py --params ... --growth-test   # PASS/FAIL table
+
+--params   : read cosmology and box_size from a simulation params .toml file
+--growth-test : print structured PASS/FAIL table (P_sim/P_lin at k < 0.1 h/Mpc)
 """
 import os
 import sys
 import glob
 import struct
+import tomllib
+import argparse
 import numpy as np
 
-# ── Cosmology (WMAP7 / ISIS paper) ────────────────────────────────────────────
+# ── CLI ────────────────────────────────────────────────────────────────────────
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument("--params",      default=None,  help="params .toml file")
+parser.add_argument("--growth-test", action="store_true", help="PASS/FAIL output")
+parser.add_argument("positional",    nargs="*")
+args, _ = parser.parse_known_args()
+
+# ── Cosmology defaults (WMAP7 / ISIS paper) ────────────────────────────────────
 h       = 0.719
 omega_m = 0.267
 omega_l = 0.733
 omega_b = 0.0449
 n_s     = 0.963
 sigma8  = 0.801
+L_default = 64.0
 
-snap_dir = sys.argv[1] if len(sys.argv) > 1 else "output_lcdm_test"
-n_grid   = int(sys.argv[2])   if len(sys.argv) > 2 else 64
-L        = float(sys.argv[3]) if len(sys.argv) > 3 else 64.0
+if args.params:
+    with open(args.params, "rb") as _f:
+        _cfg = tomllib.load(_f)
+    _cosmo  = _cfg.get("cosmology", {})
+    _run    = _cfg.get("run", {})
+    h       = _cosmo.get("h",            h)
+    omega_m = _cosmo.get("omega_m",      omega_m)
+    omega_l = _cosmo.get("omega_lambda", omega_l)
+    omega_b = _cosmo.get("omega_b",      omega_b)
+    n_s     = _cosmo.get("n_s",          n_s)
+    sigma8  = _cosmo.get("sigma8",       sigma8)
+    L_default = _run.get("box_size",     L_default)
+    # derive snapshot dir from output section if not overridden positionally
+    _outdir = _cfg.get("output", {}).get("outdir", None)
+else:
+    _outdir = None
+
+pos = args.positional
+snap_dir = pos[0] if pos else (_outdir or "output_lcdm_test")
+n_grid   = int(pos[1])   if len(pos) > 1 else 64
+L        = float(pos[2]) if len(pos) > 2 else L_default
 
 # ── BBKS transfer function ─────────────────────────────────────────────────────
 def bbks(k, gamma):
@@ -138,3 +172,73 @@ for snap in snap_files:
           f"P_sim[k_f]={P_k001:.2e}  P_theory[k_f]={P_theory_001:.2e}  "
           f"ratio={P_k001/P_theory_001:.3f}  "
           f"sigma8*D={sigma8*D:.4f}")
+
+# ── Growth test: compare saved P(k) files vs linear theory at multiple z ──────
+# Uses power_spectrum_*.txt files (averaged over many modes, more reliable than
+# a single Fourier mode from the raw snapshot).
+#
+# PASS criteria (matches Winther et al. 2015 standard):
+#   P_sim(k, a) / P_lin(k, a)  within 10% at  k < 0.1 h/Mpc
+#
+if args.growth_test:
+    pk_files = sorted(glob.glob(f"{snap_dir}/power_spectrum_*.txt"))
+    if not pk_files:
+        print(f"\n[growth-test] No power_spectrum_*.txt files found in '{snap_dir}'.")
+        print("  Run the simulation first, then re-run with --growth-test.")
+        sys.exit(1)
+
+    TOLERANCE = 0.10        # 10% allowed deviation from linear theory
+    # Test the lowest N_LOW_K_BINS modes in each snapshot, up to a hard cap of
+    # K_MAX_LINEAR h/Mpc.  For a 64 Mpc/h box k_f ≈ 0.098 h/Mpc and the first
+    # bin lands at 0.1025 h/Mpc; using N=3 bins captures k ≈ 0.10–0.17 which
+    # is safely in the quasi-linear regime at all redshifts tested here.
+    N_LOW_K_BINS = 3
+    K_MAX_LINEAR = 0.20     # h/Mpc — hard cap, never test modes above this
+
+    print(f"\n{'═'*70}")
+    print(f"LINEAR GROWTH TEST  (P_sim/P_lin, tolerance ±{TOLERANCE*100:.0f}%, k < {K_MAX_LINEAR} h/Mpc, lowest {N_LOW_K_BINS} bins)")
+    print(f"{'═'*70}")
+    print(f"{'File':<28} {'a':>6} {'z':>5}  {'k [h/Mpc]':>10}  {'P_sim/P_lin':>12}  {'status':>6}")
+    print(f"{'─'*70}")
+
+    any_fail = False
+    for pk_file in pk_files:
+        # Read header for scale factor
+        a_pk = None
+        with open(pk_file) as f:
+            for line in f:
+                if line.startswith("# a="):
+                    try:
+                        a_pk = float(line.split("a=")[1].split()[0])
+                    except (IndexError, ValueError):
+                        pass
+                    break
+        if a_pk is None:
+            continue
+
+        data = np.loadtxt(pk_file, comments="#")
+        if data.ndim < 2 or data.shape[0] < 2:
+            continue
+        k_arr, pk_arr = data[:, 0], data[:, 1]
+
+        D = growth_factor(a_pk)
+        mask    = k_arr < K_MAX_LINEAR
+        if not np.any(mask):
+            continue
+        k_test  = k_arr[mask][:N_LOW_K_BINS]
+        pk_test = pk_arr[mask][:N_LOW_K_BINS]
+        fname   = os.path.basename(pk_file)
+
+        for k_val, p_sim in zip(k_test, pk_test):
+            p_theory = P_lin(k_val, D)
+            ratio = p_sim / p_theory
+            status = "PASS" if abs(ratio - 1.0) <= TOLERANCE else "FAIL"
+            if status == "FAIL":
+                any_fail = True
+            z_val = 1.0 / a_pk - 1.0
+            print(f"{fname:<28} {a_pk:>6.3f} {z_val:>5.2f}  {k_val:>10.4f}  {ratio:>12.3f}  {status:>6}")
+
+    print(f"{'─'*70}")
+    overall = "ALL PASS" if not any_fail else "SOME FAIL — see rows above"
+    print(f"Result: {overall}")
+    print(f"{'═'*70}\n")
