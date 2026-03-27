@@ -32,6 +32,8 @@ enum Commands {
             help = "Random seed for Zel'dovich IC generator (used when --ic is omitted)"
         )]
         seed: u64,
+        #[arg(short = 'r', long, help = "Restart from a snapshot binary written by this sim")]
+        restart: Option<String>,
     },
     /// Write an example parameter file and exit
     Init {
@@ -55,7 +57,7 @@ fn main() {
             println!("Edit it, then run:  cosmo_sim run --params {params}");
         }
 
-        Commands::Run { params, ic, seed } => {
+        Commands::Run { params, ic, seed, restart } => {
             let cfg = Config::from_file(&params)
                 .unwrap_or_else(|e| {
                     eprintln!("Error reading {params}: {e}");
@@ -63,18 +65,27 @@ fn main() {
                 });
 
             log::info!("Loaded parameters from {params}");
-            let mut sim = Simulation::new(cfg);
 
-            if let Some(ic_path) = ic {
-                sim.load_ic(&ic_path)
+            let mut sim = if let Some(snap_path) = restart {
+                Simulation::read_snapshot(&snap_path, cfg)
                     .unwrap_or_else(|e| {
-                        eprintln!("Error loading IC from {ic_path}: {e}");
+                        eprintln!("Error reading snapshot {snap_path}: {e}");
                         std::process::exit(1);
-                    });
+                    })
             } else {
-                log::info!("No IC file given — generating Zel'dovich IC (seed={seed})");
-                sim.generate_ic(seed);
-            }
+                let mut s = Simulation::new(cfg);
+                if let Some(ic_path) = ic {
+                    s.load_ic(&ic_path)
+                        .unwrap_or_else(|e| {
+                            eprintln!("Error loading IC from {ic_path}: {e}");
+                            std::process::exit(1);
+                        });
+                } else {
+                    log::info!("No IC file given — generating Zel'dovich IC (seed={seed})");
+                    s.generate_ic(seed);
+                }
+                s
+            };
 
             sim.run();
         }

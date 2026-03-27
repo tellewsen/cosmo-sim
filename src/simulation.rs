@@ -136,9 +136,13 @@ impl Simulation {
         let dx       = box_size / n as Real;
 
         let out_times = self.output_schedule();
-        let mut next_out = 0_usize;
+        // When restarting from a snapshot, skip outputs already written.
+        let mut next_out = out_times.partition_point(|&t| t <= self.a);
 
         log::info!("Starting simulation: a = {:.4} → {:.4}", self.a, a_final);
+        if next_out > 0 {
+            log::info!("Restart: skipping {} output(s) already past a={:.4}", next_out, self.a);
+        }
 
         while self.a < a_final {
             self.dtau = self.compute_dtau();
