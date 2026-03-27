@@ -1,0 +1,41 @@
+# f(R) Hu-Sawicki "F6" run — Winther et al. (2015) arXiv:1506.06384
+# Model: |f_R0| = 10^-6, n = 1  (weaker signal, stronger screening than F5)
+# Compile with: cargo build --release --features fofr
+
+[run]
+box_size       = 250.0
+n_grid         = 64
+levelmax       = 0
+refine_thr     = 8
+a_init         = 0.02
+a_final        = 1.0
+dtau_max       = 5e-5
+courant_factor = 0.8
+
+[cosmology]               # Winther et al. (2015) Table 1
+omega_m      = 0.269
+omega_lambda = 0.731
+omega_b      = 0.0455
+h            = 0.704
+n_s          = 0.966
+sigma8       = 0.8
+
+[gravity]
+epsilon   = 1e-4
+n_mg_iter = 50
+n_smooth  = 2
+
+[particles]
+n_part = 64
+m_part = 0.0
+
+[scalar_field]            # Hu-Sawicki f(R) "F6" — Winther et al. (2015)
+fofr0      = 1e-6         # |f_{R0}|, more screened than F5
+n_fofr     = 1.0
+epsilon_mg = 1e-5
+
+[output]
+outdir   = "output_w15_f6_test"
+n_output = 5
+a_out    = [0.33, 0.5, 0.67, 0.82, 1.0]
+hdf5     = false

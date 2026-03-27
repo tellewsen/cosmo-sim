@@ -368,6 +368,12 @@ pub mod tests {
             "f_R must stay ≤ 0 everywhere; max = {:.3e}",
             u.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
         );
+        // At 1000× overdensity the field should be driven very close to zero
+        // (well-screened); a mean far below zero would indicate the solver
+        // is not honouring the chameleon bound.
+        let mean_u = u.iter().sum::<Real>() / u.len() as Real;
+        assert!(mean_u > -1e-7,
+            "screened field should be near zero; mean = {mean_u:.3e}");
     }
 
     #[test]
@@ -382,6 +388,9 @@ pub mod tests {
         // We use a moderate overdensity so the spike is not fully screened.
         let ng    = 16_usize;
         let cosmo = Cosmology::default();
+        // fofr0 = 1e-4 (not 1e-5): keeps the spike partially unscreened
+        // so the gradient has a well-defined sign.  At 1e-5 a 5× spike would
+        // be nearly fully screened and ∇f_R ≈ 0.
         let p     = FofrParams { fofr0: 1e-4, n: 1.0, epsilon: 1e-8,
                                  max_iter: 200, n_smooth: 2 };
         let dx    = 100.0_f64 / ng as Real;
@@ -444,6 +453,9 @@ pub mod tests {
 
         assert!(err_tight <= err_loose,
             "tight solver should be at least as close to background as loose: tight={err_tight:.3e} loose={err_loose:.3e}");
+        // Tolerance = 1e-5 * fofr0 = 1e-5 * 1e-5 = 1e-10, which is well below the
+        // solver's own convergence criterion (epsilon = 1e-10) and corresponds to
+        // sub-ppm accuracy on the field magnitude.
         assert!(err_tight < 1e-5 * p_tight.fofr0.abs(),
             "tight solver should converge near background: err={err_tight:.3e}");
     }

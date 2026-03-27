@@ -1,0 +1,36 @@
+# ΛCDM reference run — Winther et al. (2015) arXiv:1506.06384 cosmology
+# 64³ particles, 250 Mpc/h box (same cosmology as full 512³ run, reduced resolution)
+# Use for ΛCDM linear-growth test and as baseline for ΔP/P comparisons.
+
+[run]
+box_size       = 250.0    # Mpc/h  — matches Winther et al. 2015
+n_grid         = 64       # domain grid cells per side (512 for production)
+levelmax       = 0        # no AMR
+refine_thr     = 8
+a_init         = 0.02     # z ≈ 49
+a_final        = 1.0      # z = 0
+dtau_max       = 5e-5
+courant_factor = 0.8
+
+[cosmology]               # Winther et al. (2015) Table 1
+omega_m      = 0.269
+omega_lambda = 0.731
+omega_b      = 0.0455     # not specified in paper; consistent with WMAP7-era Ωb h² ≈ 0.0226
+h            = 0.704
+n_s          = 0.966
+sigma8       = 0.8
+
+[gravity]
+epsilon   = 1e-4
+n_mg_iter = 50
+n_smooth  = 2
+
+[particles]
+n_part = 64       # 64³ = 262 144 particles
+m_part = 0.0      # auto-computed from cosmology
+
+[output]
+outdir   = "output_w15_lcdm_test"
+n_output = 5
+a_out    = [0.33, 0.5, 0.67, 0.82, 1.0]   # z ≈ 2, 1, 0.5, 0.22, 0
+hdf5     = false
