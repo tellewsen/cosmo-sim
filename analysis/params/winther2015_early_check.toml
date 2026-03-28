@@ -1,0 +1,34 @@
+# Early growth check — outputs at a=0.05, 0.10, 0.20 to verify IC amplitude
+# and growth rate before the first Winther validation snapshot (a=0.33)
+[run]
+box_size       = 250.0
+n_grid         = 64
+levelmax       = 0
+refine_thr     = 8
+a_init         = 0.02
+a_final        = 0.21
+dtau_max       = 5e-5
+courant_factor = 0.8
+
+[cosmology]
+omega_m      = 0.269
+omega_lambda = 0.731
+omega_b      = 0.0
+h            = 0.704
+n_s          = 0.966
+sigma8       = 0.8
+
+[gravity]
+epsilon   = 1e-4
+n_mg_iter = 50
+n_smooth  = 2
+
+[particles]
+n_part = 64
+m_part = 0.0
+
+[output]
+outdir   = "output_w15_early_check"
+n_output = 3
+a_out    = [0.05, 0.10, 0.20]
+hdf5     = false

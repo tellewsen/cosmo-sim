@@ -102,10 +102,12 @@ fn fofr_source(
     cosmo:           &Cosmology,
     p:               &FofrParams,
 ) -> (Real, Real) {
-    // H₀ = 100 km/s/(Mpc/h), c in km/s — conversion factor for code units.
-    const H0_CODE: Real = 100.0;
+    // H₀_phys = h·100 km/s/Mpc — must match advance_a which uses h·100·E.
+    // Using 100 km/s/(Mpc/h) here instead of h·100 km/s/Mpc inflates the
+    // Compton wavelength by 1/h and the coupling by 1/h².
+    let h0: Real = cosmo.h * 100.0;
     const C_CODE:  Real = 299_792.458;
-    let prefac    = (H0_CODE * a / C_CODE).powi(2);
+    let prefac    = (h0 * a / C_CODE).powi(2);
     let r_u       = r_of_fofr(u, r0, p, rbar_a);
     let delta_r   = r_u - rbar_a;
     // Factor 3 from 8πG ρ̄_m = 3 H₀² Ω_m / a³ (compare Poisson source).
@@ -122,14 +124,14 @@ fn fofr_source(
 ///
 /// For u ≥ 0 (screened):  R is clamped to R̄, so  dS/du = 0.
 ///
-/// `a` is the scale factor; `prefac` = (H0_CODE × a / C_CODE)² and must
-/// match the prefactor computed in `fofr_source`.
+/// `a` is the scale factor; `h` is the dimensionless Hubble constant (same
+/// as used in `fofr_source`).
 #[inline]
-fn dfofr_source_du(u: Real, r_u: Real, a: Real, p: &FofrParams) -> Real {
+fn dfofr_source_du(u: Real, r_u: Real, a: Real, h: Real, p: &FofrParams) -> Real {
     if u >= 0.0 { return 0.0; }
-    const H0_CODE: Real = 100.0;
-    const C_CODE:  Real = 299_792.458;
-    let prefac = (H0_CODE * a / C_CODE).powi(2);
+    let h0: Real = h * 100.0;
+    const C_CODE: Real = 299_792.458;
+    let prefac = (h0 * a / C_CODE).powi(2);
     prefac * r_u / (3.0 * (p.n + 1.0) * (-u))
 }
 
@@ -172,7 +174,7 @@ fn fofr_ngs_sweep(
                             + snap[idx3p(i,   j,   k+1, n)]
                             + snap[idx3p(i,   j,   k-1, n)];
                     let (src, r_u) = fofr_source(u_c, rho[c], a, r0, rbar_a, cosmo, p);
-                    let dsrc  = dfofr_source_du(u_c, r_u, a, p);
+                    let dsrc  = dfofr_source_du(u_c, r_u, a, cosmo.h, p);
                     let lap   = (nb - 6.0 * u_c) * inv_dx2;
                     let denom = -6.0 * inv_dx2 - dsrc;
                     // Enforce physical bound: f_R ≤ 0 for Hu-Sawicki.
@@ -469,9 +471,10 @@ pub mod tests {
         }
         let err = err_sum / count as Real;
 
-        // Allow up to 2% deviation from background at unperturbed cells.
-        // The physical perturbation ∝ exp(-dx/λ_C) ≈ exp(-2.9) ≈ 5% at i=1.
-        assert!(err < 2e-2 * p.fofr0.abs(),
+        // Allow up to 5% deviation from background at unperturbed cells.
+        // With corrected H₀ = h×100 ≈ 70.4 km/s/Mpc the Compton wavelength is
+        // larger by ~1/h, so field decays more slowly: exp(-dx/λ_C) ≈ 13% at i=1.
+        assert!(err < 5e-2 * p.fofr0.abs(),
             "unperturbed cells should stay near background: err={err:.3e}, bg={expected:.3e}");
     }
 }

@@ -199,18 +199,50 @@ Even at dx=λ₀, the symmetron cannot develop the spatial gradients needed for 
 
 ---
 
+### 2026-03-28 — ΛCDM linear growth confirmed correct
+
+**Background:** After fixing the H₀ unit bug (`ca11caf`), earlier diagnostic scripts reported
+P_sim/P_lin ≈ 3–9 (constant across all epochs), suggesting a remaining IC amplitude error.
+Investigation revealed the excess was **not** in the simulation — it was a bug in the
+diagnostic Python scripts.
+
+**Root cause:** The σ₈ normalisation integral in several diagnostic scripts used
+```python
+np.trapezoid(P_unnorm * W² * k², np.log(k))  # wrong: k² in dlnk integrand
+```
+when the correct dlnk formula is:
+```python
+np.trapezoid(P_unnorm * W² * k³, np.log(k))  # correct: σ₈² = ∫ P k² W² dk = ∫ P k³ W² dlnk
+```
+The missing factor of k caused A_s to be 8.3× too small in those scripts, making P_lin appear
+8.3× too low relative to the simulation. The production scripts (`pk_theory.py`, `plot_isis.py`,
+`check_delta_pk.py`) were already using the correct formula.
+
+**Verification:** `analysis/check_snapshot_pk.py` with the corrected A_s = 3.66×10⁶ shows:
+- k=0.037 h/Mpc (N=12 modes): P_sim/P_lin = 0.96 at a=0.33
+- k=0.088 h/Mpc (N=32 modes): P_sim/P_lin = 1.01 at a=0.33
+- k=0.105 h/Mpc (N=114 modes): P_sim/P_lin = 0.98 at a=0.33
+- k=0.037 h/Mpc (N=12 modes): P_sim/P_lin = 0.97 at a=1.00
+- k=0.105 h/Mpc (N=114 modes): P_sim/P_lin = 1.008 at a=1.00
+
+Ratios are consistent with 1 within sample variance (σ/P = √(2/N) ≈ 0.13 for N=114).
+Scatter at low-k bins (N=6–8) is pure sample variance.
+
+**Conclusion:** ΛCDM linear growth test **PASSES**. The simulation correctly tracks D(a)² × P_lin_z0
+from a=0.33 to a=1.0.
+
+---
+
 ## Next Steps
 
 - [x] Run Winther symmetron sim (ΔP/P=0, resolution-limited)
-- [x] Run growth test on output_w15_lcdm_test (FAIL, DKD bug)
+- [x] Run growth test on output_w15_lcdm_test — **PASS** (see entry above)
 - [x] Find and fix f(R) unit bug (`ca11caf`)
 - [x] F5 rerun with fix — non-zero ΔP/P confirmed (up to ~6% at z=0.5)
 - [x] F6 rerun with fix — ΔP/P ≈ 0 (unresolved, expected)
 - [x] Generate ΔP/P figures (`figs_winther2015_test/`)
 - [x] Symmetron 64 Mpc/h rerun — ΔP/P = 0 (dx=λ₀ marginal, not sufficient)
+- [x] ΛCDM linear growth confirmed correct (σ₈ diagnostic script bug found and documented)
 - [ ] Check symmetron fifth force units (possible missing velocity-scale factor, needs resolved run)
-- [ ] Fix primary DKD issue — re-run ΛCDM growth test
 - [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison
-- [ ] Check symmetron fifth force for same unit issue (see analysis in git log)
-- [ ] Fix primary DKD issue (a_half fix validation)
 - [ ] Record all results in ROADMAP.md

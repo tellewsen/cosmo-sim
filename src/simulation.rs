@@ -174,11 +174,13 @@ impl Simulation {
             // ── Poisson solver ────────────────────────────────────────────
             let g_cfg = &self.config.gravity;
             // Source:  (3/2) H₀² Ω_m / a_half × δ  (evaluated at half-step)
-            // With τ = cosmic time t, positions in Mpc/h, velocities in km/s:
-            //   ∇²Φ = (3/2) (100 km/s/(Mpc/h))² Ω_m / a × δ
-            // H₀ = 100 km/s/(Mpc/h) → H₀² = 10 000 (km/s)²/(Mpc/h)²
-            const H0_CODE: Real = 100.0; // km/s / (Mpc/h)
-            let prefac: Real = 1.5 * H0_CODE * H0_CODE * self.cosmology.omega_m / a_half;
+            // advance_a uses cosmic time τ = t with da/dτ = a·H_phys(a), where
+            // H_phys = h·100·E(a) km/s/Mpc.  The consistent H₀ for ∇²Φ is
+            // H₀_phys = h·100 km/s/Mpc, NOT the h-unit constant 100 km/s/(Mpc/h).
+            // Using 100 instead of h·100 inflates the force by 1/h² ≈ 2 and
+            // causes ~3.7× excess in δ by z=2.
+            let h0: Real = self.cosmology.h * 100.0; // H₀ physical [km/s/Mpc]
+            let prefac: Real = 1.5 * h0 * h0 * self.cosmology.omega_m / a_half;
             let source: Vec<Real> = rho.iter().map(|r| prefac * (r - 1.0)).collect();
             let phi = solve_poisson(
                 &source,
