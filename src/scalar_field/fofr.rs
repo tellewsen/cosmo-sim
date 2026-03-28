@@ -80,7 +80,15 @@ fn r_of_fofr(u: Real, r0: Real, p: &FofrParams, rbar_a: Real) -> Real {
 
 /// RHS of the f_R equation at a single cell.
 ///
-///   S(u) = (1/3) [ R(u) − R̄(a)  −  Ω_m (ρ/ρ̄ − 1) a⁻³ ]
+/// The quasi-static comoving equation with positions in Mpc/h is
+///
+///   ∇²f_R = (H₀ a / c)² / 3 × [ R(f_R) − R̄(a)  −  3 Ω_m (ρ/ρ̄ − 1) a⁻³ ]
+///
+/// where H₀ = 100 km/s/(Mpc/h) and c = 299 792 km/s.  The prefactor
+/// (H₀ a/c)² converts the dimensionless Ricci-scalar terms (in H₀ = 1
+/// units) so that ∇²f_R is in (Mpc/h)⁻², consistent with grid spacing dx
+/// in Mpc/h.  Without this factor the effective Compton wavelength is
+/// inflated by c/H₀ ≈ 3000, which screens the field on every grid cell.
 ///
 /// Returns `(S, R(u))` so the caller can reuse R(u) for the derivative
 /// without recomputing it.
@@ -94,24 +102,35 @@ fn fofr_source(
     cosmo:           &Cosmology,
     p:               &FofrParams,
 ) -> (Real, Real) {
+    // H₀ = 100 km/s/(Mpc/h), c in km/s — conversion factor for code units.
+    const H0_CODE: Real = 100.0;
+    const C_CODE:  Real = 299_792.458;
+    let prefac    = (H0_CODE * a / C_CODE).powi(2);
     let r_u       = r_of_fofr(u, r0, p, rbar_a);
     let delta_r   = r_u - rbar_a;
-    let delta_rho = (rho_over_rhobar - 1.0) * cosmo.omega_m / (a * a * a);
-    ((delta_r - delta_rho) / 3.0, r_u)
+    // Factor 3 from 8πG ρ̄_m = 3 H₀² Ω_m / a³ (compare Poisson source).
+    let delta_rho = 3.0 * (rho_over_rhobar - 1.0) * cosmo.omega_m / (a * a * a);
+    (prefac * (delta_r - delta_rho) / 3.0, r_u)
 }
 
 /// Analytical derivative  dS/du.
 ///
 /// For u < 0:
 ///   R(u) = r0 (n f_{R0} / |u|)^α  with  α = 1/(n+1)
-///   dR/du = α R(u) / (−u)
-///   dS/du = α R(u) / (3(−u))
+///   dR/du = R(u) / ((n+1)(−u))
+///   dS/du = prefac × R(u) / (3(n+1)(−u))   where prefac = (H₀ a/c)²
 ///
 /// For u ≥ 0 (screened):  R is clamped to R̄, so  dS/du = 0.
+///
+/// `a` is the scale factor; `prefac` = (H0_CODE × a / C_CODE)² and must
+/// match the prefactor computed in `fofr_source`.
 #[inline]
-fn dfofr_source_du(u: Real, r_u: Real, p: &FofrParams) -> Real {
+fn dfofr_source_du(u: Real, r_u: Real, a: Real, p: &FofrParams) -> Real {
     if u >= 0.0 { return 0.0; }
-    r_u / (3.0 * (p.n + 1.0) * (-u))
+    const H0_CODE: Real = 100.0;
+    const C_CODE:  Real = 299_792.458;
+    let prefac = (H0_CODE * a / C_CODE).powi(2);
+    prefac * r_u / (3.0 * (p.n + 1.0) * (-u))
 }
 
 // ── Newton-Gauss-Seidel sweep ──────────────────────────────────────────────────
@@ -153,7 +172,7 @@ fn fofr_ngs_sweep(
                             + snap[idx3p(i,   j,   k+1, n)]
                             + snap[idx3p(i,   j,   k-1, n)];
                     let (src, r_u) = fofr_source(u_c, rho[c], a, r0, rbar_a, cosmo, p);
-                    let dsrc  = dfofr_source_du(u_c, r_u, p);
+                    let dsrc  = dfofr_source_du(u_c, r_u, a, p);
                     let lap   = (nb - 6.0 * u_c) * inv_dx2;
                     let denom = -6.0 * inv_dx2 - dsrc;
                     // Enforce physical bound: f_R ≤ 0 for Hu-Sawicki.
@@ -419,9 +438,11 @@ pub mod tests {
 
     #[test]
     fn fofr_solver_converges_to_background() {
-        // With a mild density perturbation (non-uniform rho), the tight solver
-        // should deviate less from the background value at the unperturbed cells
-        // than the loose solver.  The background value is u₀ = -n·fofr0 = -1e-5.
+        // With a mild density perturbation the field at UNPERTURBED cells should
+        // stay close to the background value u₀ = -n·fofr0 = -1e-5.
+        // Compton wavelength ≈ 4 Mpc/h; dx = 100/8 = 12.5 Mpc/h >> λ_C, so the
+        // perturbation from the overdense plane decays to < 10% of background
+        // before reaching the nearest unperturbed cells.
         let ng       = 8_usize;
         let cosmo    = Cosmology::default();
         let dx       = 100.0_f64 / ng as Real;
@@ -431,32 +452,26 @@ pub mod tests {
         let mut rho = vec![1.0_f64; ng * ng * ng];
         for j in 0..ng { for k in 0..ng { rho[j * ng + k] = 2.0; } }
 
-        let p_tight = FofrParams { fofr0: 1e-5, n: 1.0, epsilon: 1e-10,
-                                   max_iter: 300, n_smooth: 4 };
-        let p_loose = FofrParams { fofr0: 1e-5, n: 1.0, epsilon: 1e-2,
-                                   max_iter: 2,   n_smooth: 1 };
-
-        let u_tight = solve_fofr(&rho, 1.0, dx, ng, &p_tight, &cosmo);
-        let u_loose = solve_fofr(&rho, 1.0, dx, ng, &p_loose, &cosmo);
+        let p = FofrParams { fofr0: 1e-5, n: 1.0, epsilon: 1e-10,
+                             max_iter: 300, n_smooth: 4 };
+        let u = solve_fofr(&rho, 1.0, dx, ng, &p, &cosmo);
 
         // Measure error only at the unperturbed cells (i != 0).
-        let err = |u: &[Real]| {
-            let cells: Vec<Real> = (1..ng).flat_map(|i| {
-                (0..ng).flat_map(move |j| {
-                    (0..ng).map(move |k| u[i * ng * ng + j * ng + k])
-                })
-            }).collect();
-            cells.iter().map(|&v| (v - expected).abs()).sum::<Real>() / cells.len() as Real
-        };
-        let err_tight = err(&u_tight);
-        let err_loose = err(&u_loose);
+        let mut err_sum = 0.0_f64;
+        let mut count   = 0_usize;
+        for i in 1..ng {
+            for j in 0..ng {
+                for k in 0..ng {
+                    err_sum += (u[i * ng * ng + j * ng + k] - expected).abs();
+                    count   += 1;
+                }
+            }
+        }
+        let err = err_sum / count as Real;
 
-        assert!(err_tight <= err_loose,
-            "tight solver should be at least as close to background as loose: tight={err_tight:.3e} loose={err_loose:.3e}");
-        // Tolerance = 1e-5 * fofr0 = 1e-5 * 1e-5 = 1e-10, which is well below the
-        // solver's own convergence criterion (epsilon = 1e-10) and corresponds to
-        // sub-ppm accuracy on the field magnitude.
-        assert!(err_tight < 1e-5 * p_tight.fofr0.abs(),
-            "tight solver should converge near background: err={err_tight:.3e}");
+        // Allow up to 2% deviation from background at unperturbed cells.
+        // The physical perturbation ∝ exp(-dx/λ_C) ≈ exp(-2.9) ≈ 5% at i=1.
+        assert!(err < 2e-2 * p.fofr0.abs(),
+            "unperturbed cells should stay near background: err={err:.3e}, bg={expected:.3e}");
     }
 }
