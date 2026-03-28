@@ -133,13 +133,43 @@ The Winther et al. 2015 paper used 512³ particles (dx ≈ 0.49 Mpc/h < λ₀). 
 
 ---
 
+### 2026-03-28 — f(R) unit-conversion bug found and fixed
+
+**Root cause of ΔP/P ≈ 0 for F5 (`output_w15_f5_test/` from 2026-03-27):**
+
+Two bugs in `src/scalar_field/fofr.rs`:
+
+1. **Missing `(H₀·a/c)²` prefactor in `fofr_source`.**
+   The quasi-static comoving f(R) equation is
+   `∇²f_R = (H₀a/c)²/3 × [δR − 3Ω_m δ/a³]`
+   where ∇ is w.r.t. comoving x in Mpc/h, H₀ = 100 km/s/(Mpc/h), c = 299 792 km/s.
+   The missing factor (H₀/c)² ≈ 1.11×10⁻⁷ inflated the effective Compton wavelength
+   by c/H₀ ≈ 3000, making it sub-grid everywhere — hence the chameleon screened everything.
+   Also fixed: factor of 3 in the matter coupling (from 8πGρ̄_m = 3H₀²Ω_m/a³).
+
+2. **Missing c² multiplier on the fifth force.**
+   `fofr_fifth_force` returns `(1/2)∇f_R` with f_R dimensionless and ∇ in (Mpc/h)⁻¹,
+   giving units 1/(Mpc/h). The physical fifth force is `a₅ = (c²/2)∇f_R` in
+   (km/s)²/(Mpc/h) — the same units as the Poisson-derived gravitational acceleration.
+
+**Expected outcome after fix:**
+- F5 (|f_R0|=1e-5): λ_C ≈ 4 Mpc/h, dx = 3.9 Mpc/h → marginally resolved, small but non-zero ΔP/P.
+- F6 (|f_R0|=1e-6): λ_C ≈ 1.4 Mpc/h, dx = 3.9 Mpc/h → unresolved, ΔP/P ≈ 0 (same as symmetron).
+- Full validation requires 512³ (dx = 0.49 Mpc/h) for both F5 and F6.
+
+**Fix committed:** `ca11caf` — both F5 and F6 reruns started 2026-03-28.
+
+---
+
 ## Next Steps
 
-- [x] Run Winther symmetron sim
-- [x] Run growth test on output_w15_lcdm_test
-- [x] Run Winther f(R) F5 sim (`output_w15_f5_test/`, completed 2026-03-27)
-- [ ] Run Winther f(R) F6 sim — needs fresh run (was killed at step 20, no snapshots written): `cargo build --release --features fofr && ./target/release/cosmo_sim run --params analysis/params/winther2015_f6_test.toml --seed 42`
+- [x] Run Winther symmetron sim (ΔP/P=0, resolution-limited)
+- [x] Run growth test on output_w15_lcdm_test (FAIL, DKD bug)
+- [x] Find and fix f(R) unit bug (`ca11caf`)
+- [ ] F5 rerun with fix: `output_w15_f5_test/` (running, ~90 min)
+- [ ] F6 rerun with fix: `output_w15_f6_test/` (running, ~120 min)
 - [ ] Generate ΔP/P figures: `uv run python analysis/plot_isis.py --lcdm output_w15_lcdm_test --mg output_w15_f5_test --label "f(R) F5" --outdir figs_winther2015_test/fofr_f5`
 - [ ] Rerun symmetron with 64 Mpc/h box to validate code at dx ≈ λ₀
+- [ ] Check symmetron fifth force for same unit issue (see analysis in git log)
 - [ ] Fix primary DKD issue (a_half fix validation)
 - [ ] Record all results in ROADMAP.md
