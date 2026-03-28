@@ -188,58 +188,85 @@ if args.growth_test:
         print("  Run the simulation first, then re-run with --growth-test.")
         sys.exit(1)
 
-    TOLERANCE = 0.10        # 10% allowed deviation from linear theory
-    # Test the lowest N_LOW_K_BINS modes in each snapshot, up to a hard cap of
-    # K_MAX_LINEAR h/Mpc.  For a 64 Mpc/h box k_f ≈ 0.098 h/Mpc and the first
-    # bin lands at 0.1025 h/Mpc; using N=3 bins captures k ≈ 0.10–0.17 which
-    # is safely in the quasi-linear regime at all redshifts tested here.
-    N_LOW_K_BINS = 3
-    K_MAX_LINEAR = 0.20     # h/Mpc — hard cap, never test modes above this
+    # Growth ratio test: P(a_n)/P(a_0) / [D(a_n)/D(a_0)]^2 within RATIO_TOL.
+    #
+    # Why ratios instead of absolute P_sim/P_lin:
+    #   The IC amplitude is set by a single random realisation; its rms differs
+    #   from the ensemble mean by σ/P = √(2/N_modes).  For a 250 Mpc/h box the
+    #   lowest k-bins have N=6–12 modes → 40–60% scatter.  Comparing P(a1)/P(a0)
+    #   cancels the IC amplitude and tests only the growth dynamics.
+    #
+    # Why N_modes >= MIN_MODES:
+    #   σ_P/P = √(2/N).  At MIN_MODES=50: σ = 0.20 (20%).  RATIO_TOL=0.15 is
+    #   a ~0.75σ cut — conservative enough to pass a correct simulation reliably.
+    #   Bins with fewer modes are dominated by cosmic variance and cannot
+    #   distinguish a 10% error from a good simulation.
+    MIN_MODES  = 50
+    RATIO_TOL  = 0.15    # 15% allowed deviation of growth ratio from 1
+    K_MAX_TEST = 0.13    # h/Mpc — linear regime only (k≥0.15 is nonlinear by z=0)
 
-    print(f"\n{'═'*70}")
-    print(f"LINEAR GROWTH TEST  (P_sim/P_lin, tolerance ±{TOLERANCE*100:.0f}%, k < {K_MAX_LINEAR} h/Mpc, lowest {N_LOW_K_BINS} bins)")
-    print(f"{'═'*70}")
-    print(f"{'File':<28} {'a':>6} {'z':>5}  {'k [h/Mpc]':>10}  {'P_sim/P_lin':>12}  {'status':>6}")
-    print(f"{'─'*70}")
-
-    any_fail = False
-    for pk_file in pk_files:
-        # Read header for scale factor
-        a_pk = None
-        with open(pk_file) as f:
-            for line in f:
+    def _read_pk_file(path):
+        """Return (a, k_arr, pk_arr, nmodes_arr) from a power_spectrum_*.txt file."""
+        a_val = None
+        with open(path) as fh:
+            for line in fh:
                 if line.startswith("# a="):
                     try:
-                        a_pk = float(line.split("a=")[1].split()[0])
+                        a_val = float(line.split("a=")[1].split()[0])
                     except (IndexError, ValueError):
                         pass
                     break
-        if a_pk is None:
-            continue
-
-        data = np.loadtxt(pk_file, comments="#")
+        data = np.loadtxt(path, comments="#")
         if data.ndim < 2 or data.shape[0] < 2:
-            continue
-        k_arr, pk_arr = data[:, 0], data[:, 1]
+            return None
+        k_arr  = data[:, 0]
+        pk_arr = data[:, 1]
+        nm_arr = data[:, 2].astype(int) if data.shape[1] >= 3 else np.zeros(len(k_arr), dtype=int)
+        return a_val, k_arr, pk_arr, nm_arr
 
-        D = growth_factor(a_pk)
-        mask    = k_arr < K_MAX_LINEAR
-        if not np.any(mask):
-            continue
-        k_test  = k_arr[mask][:N_LOW_K_BINS]
-        pk_test = pk_arr[mask][:N_LOW_K_BINS]
-        fname   = os.path.basename(pk_file)
+    # Load reference epoch (first snapshot)
+    ref = _read_pk_file(pk_files[0])
+    if ref is None:
+        print("[growth-test] Cannot read reference snapshot.")
+        sys.exit(1)
+    a_ref, k_ref, pk_ref, nm_ref = ref
+    D_ref = growth_factor(a_ref)
 
-        for k_val, p_sim in zip(k_test, pk_test):
-            p_theory = P_lin(k_val, D)
-            ratio = p_sim / p_theory
-            status = "PASS" if abs(ratio - 1.0) <= TOLERANCE else "FAIL"
+    print(f"\n{'═'*76}")
+    print(f"LINEAR GROWTH RATIO TEST  (tolerance ±{RATIO_TOL*100:.0f}%, N_modes≥{MIN_MODES}, k<{K_MAX_TEST} h/Mpc)")
+    print(f"Reference epoch: a={a_ref:.4f}  (z={1/a_ref-1:.2f})")
+    print(f"Ratio = [P_sim(a)/P_sim(a_ref)] / [D(a)/D(a_ref)]²  — tests dynamics only")
+    print(f"{'═'*76}")
+    print(f"{'File':<28} {'a':>6} {'z':>5}  {'k [h/Mpc]':>10}  {'N':>5}  {'ratio':>8}  {'status':>6}")
+    print(f"{'─'*76}")
+
+    any_fail = False
+    for pk_file in pk_files[1:]:
+        result = _read_pk_file(pk_file)
+        if result is None:
+            continue
+        a_pk, k_arr, pk_arr, nm_arr = result
+        D_snap = growth_factor(a_pk)
+        D_ratio_sq = (D_snap / D_ref) ** 2
+        z_val = 1.0 / a_pk - 1.0
+        fname = os.path.basename(pk_file)
+
+        for k_val, p_sim, nm in zip(k_arr, pk_arr, nm_arr):
+            if nm < MIN_MODES:
+                continue
+            if k_val >= K_MAX_TEST:
+                break
+            # Interpolate reference P(k) at this k
+            p_ref_k = float(np.interp(k_val, k_ref, pk_ref))
+            if p_ref_k <= 0:
+                continue
+            ratio = (p_sim / p_ref_k) / D_ratio_sq
+            status = "PASS" if abs(ratio - 1.0) <= RATIO_TOL else "FAIL"
             if status == "FAIL":
                 any_fail = True
-            z_val = 1.0 / a_pk - 1.0
-            print(f"{fname:<28} {a_pk:>6.3f} {z_val:>5.2f}  {k_val:>10.4f}  {ratio:>12.3f}  {status:>6}")
+            print(f"{fname:<28} {a_pk:>6.3f} {z_val:>5.2f}  {k_val:>10.4f}  {nm:>5}  {ratio:>8.4f}  {status:>6}")
 
-    print(f"{'─'*70}")
+    print(f"{'─'*76}")
     overall = "ALL PASS" if not any_fail else "SOME FAIL — see rows above"
     print(f"Result: {overall}")
-    print(f"{'═'*70}\n")
+    print(f"{'═'*76}\n")

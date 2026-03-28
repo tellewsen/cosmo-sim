@@ -6,7 +6,7 @@ Read a Rust binary snapshot, compute P(k) in Python, and compare to:
 Snapshot format: [step:u64][a:f64][n_part:u64] then per particle [x,y,z,vx,vy,vz] as f64.
 
 Usage:
-  uv run python analysis/check_snapshot_pk.py output_w15_lcdm_fixed/snapshot_0000.bin
+  uv run python analysis/check_snapshot_pk.py output_w15_lcdm_test/snapshot_0000.bin
 """
 import struct
 import sys
@@ -47,7 +47,7 @@ A_s = sigma8**2 / s2u
 def P_lin_z0(k): return A_s * P_unnorm(k)
 
 # ── Read snapshot ─────────────────────────────────────────────────────────────
-snap_path = sys.argv[1] if len(sys.argv) > 1 else "output_w15_lcdm_fixed/snapshot_0000.bin"
+snap_path = sys.argv[1] if len(sys.argv) > 1 else "output_w15_lcdm_test/snapshot_0000.bin"
 print(f"Reading snapshot: {snap_path}")
 
 with open(snap_path, "rb") as f:

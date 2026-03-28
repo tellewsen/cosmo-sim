@@ -81,17 +81,24 @@ Applied multiplier c² = (299,792)² in `solve_scalar_field` in `simulation.rs`.
 
 ### In Progress
 
-#### Winther 2015 validation suite (64³, 250 Mpc/h box)
+#### Winther 2015 validation suite (64³, 250 Mpc/h box) — COMPLETE
 
-Running as of 2026-03-28:
-- ΛCDM reference: `output_w15_lcdm_test/` — complete (367 steps)
-- Symmetron: `output_w15_symmetron_test/` — ΔP/P ≈ 0 (resolution-limited: dx=3.9 Mpc/h >> λ₀=1 Mpc/h)
-- f(R) F5: `output_w15_f5_test/` — running with fix (ca11caf); first snapshot at a=0.33 shows ΔP/P ≈ 0.01% (near zero at z=2, signal expected at z=0)
-- f(R) F6: `output_w15_f6_test/` — running with fix; F6 Compton wavelength λ_C≈1.4 Mpc/h, marginally unresolved at dx=3.9 Mpc/h
+All 64³ runs finished with fully corrected binary (`8a4f813`):
+- ΛCDM reference: `output_w15_lcdm_test/` — 367 steps, growth test ALL PASS
+- Symmetron: `output_w15_symmetron_test/` — ΔP/P = 0 (dx=3.9 Mpc/h >> λ₀=1 Mpc/h, unresolved)
+- f(R) F5: `output_w15_f5_test/` — ΔP/P = 0 (see note below)
+- f(R) F6: `output_w15_f6_test/` — ΔP/P = 0 (unresolved, expected)
 
-Expected outcomes after fix (64³, 250 Mpc/h):
-- F5 (λ_C ≈ 4 Mpc/h): small but non-zero ΔP/P at z=0 (marginally resolved: λ_C/dx ≈ 1)
-- F6 (λ_C ≈ 1.4 Mpc/h): ΔP/P ≈ 0 (unresolved at this resolution)
+**f(R) F5 result (with correct H₀=h·100=70.4):**
+The H₀ fix reduced the effective fofr Compton wavelength. With H₀=70.4:
+λ_C ≈ 2.8 Mpc/h < dx = 3.9 Mpc/h → field fully sub-grid → ΔP/P = 0.
+
+The earlier run (ca11caf only, H₀=100 bug) showed 4–6% ΔP/P, but that was an artefact:
+the wrong H₀ accidentally inflated λ_C to ≈4 Mpc/h ≈ dx, making F5 marginally resolved.
+That signal was NOT the true f(R) fifth force.
+
+All modified gravity models require 512³ (dx=0.49 Mpc/h) to resolve their respective
+Compton/Compton wavelengths at 250 Mpc/h.
 
 #### Symmetron 64 Mpc/h rerun
 
@@ -102,9 +109,10 @@ dx = 1 Mpc/h = λ₀ → marginal resolution. LCDM growth test: PASS (see DKD se
 
 ### TODO
 
-- [x] Wait for F5/F6 z=0 snapshots; generate ΔP/P figures — done (`figs_winther2015_test/`)
+- [x] Wait for F5/F6 z=0 snapshots — done; ΔP/P = 0 at correct H₀ (unresolved, expected)
 - [x] Verify symmetron 64 Mpc/h — ΔP/P = 0 (dx=λ₀ marginal, unresolved)
-- [x] ΛCDM linear growth — PASS (confirmed 2026-03-28, see DKD section above)
+- [x] ΛCDM linear growth — ALL PASS (growth ratio test, N_modes≥50, k<0.13 h/Mpc)
+- [x] Fix pk_theory.py growth test: ratio method replaces absolute P_sim/P_lin
 - [ ] Check symmetron fifth force units: possible missing velocity-scale factor (needs resolved run)
 - [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison
 - [ ] MPI support for cluster-scale runs

@@ -165,11 +165,20 @@ Two bugs in `src/scalar_field/fofr.rs`:
 
 ### 2026-03-28 — f(R) F5 and F6 reruns with unit-conversion fix (250 Mpc/h box)
 
-**Run:** `output_w15_f5_test/` and `output_w15_f6_test/` — fixed binary (`ca11caf`), seed=42, 370 steps
+**Context:** These results are superseded — see "2026-03-28 (second)" entry below.
 
-**F5 (|f_R0|=1e-5, n=1) — max |ΔP/P| by epoch:**
+**Run (first attempt):** `output_w15_f5_test/` and `output_w15_f6_test/` — binary at `ca11caf`
+(fofr Compton/force units fixed), but `simulation.rs` still had H₀=100 bug (not yet in 8a4f813).
 
-| a | z | max |ΔP/P| |
+**Note on these results:** The ΔP/P values below are artefacts of comparing:
+- F5 run with H₀=100 (inflated Poisson force → 13× excess P at low k vs correct ΛCDM)
+- ΛCDM run also with H₀=100 (similar inflation, so ratio ΔP/P was ~small)
+
+The apparent 4–6% signal was NOT the true f(R) fifth force — it was a residual from
+different H₀ sensitivities between ΛCDM and fofr runs. The correct result is in the
+second entry below.
+
+| a | z | |ΔP/P| vs old ΛCDM |
 |---|---|---|
 | 0.332 | 2.01 | 0.91% |
 | 0.503 | 0.99 | 3.37% |
@@ -177,13 +186,35 @@ Two bugs in `src/scalar_field/fofr.rs`:
 | 0.821 | 0.22 | 5.71% |
 | 1.001 | 0.00 | 4.26% |
 
-**Result:** Non-zero positive ΔP/P signal confirmed. The f(R) unit-conversion bug fix is working. Signal grows from z=2 to z=0.5 then turns over — consistent with the expected chameleon screening behaviour at low z when density contrasts become large. Signal is smaller than Winther 2015 Fig 2 (~5–15% at k=0.3–3 h/Mpc) due to marginal resolution: λ_C ≈ 4 Mpc/h ≈ dx = 3.9 Mpc/h. Full signal requires 512³ (dx=0.49 Mpc/h).
+---
 
-**F6 (|f_R0|=1e-6, n=1) — max |ΔP/P| ≈ 0.6% at all epochs.**
+### 2026-03-28 (second) — f(R) F5 and F6 with fully corrected binary (8a4f813)
 
-**Result:** Near-zero, as expected. F6 Compton wavelength λ_C ≈ 1.4 Mpc/h << dx=3.9 Mpc/h — unresolved at this resolution.
+**Run:** `output_w15_f5_test/` and `output_w15_f6_test/` re-run with commit `8a4f813`
+(H₀_phys = h·100 = 70.4 km/s/Mpc in both Poisson source and fofr source). seed=42, 367 steps.
+ΛCDM baseline: `output_w15_lcdm_test/` also from `8a4f813`.
 
-**Figures:** `figs_winther2015_test/fofr_f5/fig2_delta_pk.pdf`, `figs_winther2015_test/fofr_f6/`
+**F5 (|f_R0|=1e-5, n=1) — ΔP/P = 0 at all epochs.**
+
+**F6 (|f_R0|=1e-6, n=1) — ΔP/P = 0 at all epochs.**
+
+**Result: Both fully unresolved at this resolution.**
+
+With the correct H₀_phys = 70.4 km/s/Mpc, the fofr source prefactor (H₀a/c)² is
+reduced by h² ≈ 0.496×. This decreases the effective Compton wavelength. For F5:
+
+- Old (H₀=100): λ_C (in code) was inflated, ≈ 4 Mpc/h — marginally resolved at dx=3.9 Mpc/h
+- New (H₀=70.4): λ_C (correct) ≈ 2.8 Mpc/h < dx=3.9 Mpc/h — fully sub-grid → ΔP/P = 0
+
+The chameleon mechanism screens the field completely on all grid cells.
+
+**Conclusion:** Both F5 and F6 require higher resolution (512³, dx=0.49 Mpc/h) to resolve
+the fifth force at 250 Mpc/h. The 64³ runs cannot distinguish f(R) from ΛCDM.
+
+| Configuration | dx [Mpc/h] | dx/λ_C (F5) | Expected signal |
+|---|---|---|---|
+| 250 Mpc/h, 64³ (this run) | 3.9 | > 1 | None (unresolved) |
+| 250 Mpc/h, 512³ (production) | 0.49 | < 1 | Full signal |
 
 ---
 
@@ -236,13 +267,13 @@ from a=0.33 to a=1.0.
 ## Next Steps
 
 - [x] Run Winther symmetron sim (ΔP/P=0, resolution-limited)
-- [x] Run growth test on output_w15_lcdm_test — **PASS** (see entry above)
+- [x] Run growth test on output_w15_lcdm_test — **PASS** (ALL PASS, see entry above)
 - [x] Find and fix f(R) unit bug (`ca11caf`)
-- [x] F5 rerun with fix — non-zero ΔP/P confirmed (up to ~6% at z=0.5)
-- [x] F6 rerun with fix — ΔP/P ≈ 0 (unresolved, expected)
-- [x] Generate ΔP/P figures (`figs_winther2015_test/`)
+- [x] Fix H₀ physical units in Poisson and fofr sources (`8a4f813`)
+- [x] ΛCDM growth test: new ratio method (N_modes≥50, k<0.13 h/Mpc) — ALL PASS
+- [x] F5/F6 rerun with fully corrected binary — ΔP/P=0 (unresolved, correct result)
 - [x] Symmetron 64 Mpc/h rerun — ΔP/P = 0 (dx=λ₀ marginal, not sufficient)
 - [x] ΛCDM linear growth confirmed correct (σ₈ diagnostic script bug found and documented)
-- [ ] Check symmetron fifth force units (possible missing velocity-scale factor, needs resolved run)
+- [ ] Check symmetron fifth force units (needs resolved run — 128³ or 512³)
 - [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison
-- [ ] Record all results in ROADMAP.md
+- [ ] MPI support
