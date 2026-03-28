@@ -85,6 +85,12 @@ Located in `analysis/params/`. Structure:
 
 Quick test configs: `lcdm_test.toml` (64³), `lcdm_full.toml` (512³).
 
+## Analysis Scripts
+
+Never run Python analysis inline (`python3 -c "..."`). Always write the script to
+`analysis/<name>.py` first, then run with `uv run python analysis/<name>.py`.
+This keeps every diagnostic reusable.
+
 ## Known Issues (see ROADMAP.md)
 
 **DKD timestep accuracy at early times:** The leapfrog uses the scale factor at step start instead of the half-step. For large Δa/a (≈65% at early times with a: 0.02→0.033), this causes 3–7× excess P(k) power growth. A scale-factor CFL condition and use of `a_half` in the Poisson source have been partially implemented but not fully validated. This is the primary open issue.

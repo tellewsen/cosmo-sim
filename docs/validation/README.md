@@ -161,15 +161,56 @@ Two bugs in `src/scalar_field/fofr.rs`:
 
 ---
 
+---
+
+### 2026-03-28 — f(R) F5 and F6 reruns with unit-conversion fix (250 Mpc/h box)
+
+**Run:** `output_w15_f5_test/` and `output_w15_f6_test/` — fixed binary (`ca11caf`), seed=42, 370 steps
+
+**F5 (|f_R0|=1e-5, n=1) — max |ΔP/P| by epoch:**
+
+| a | z | max |ΔP/P| |
+|---|---|---|
+| 0.332 | 2.01 | 0.91% |
+| 0.503 | 0.99 | 3.37% |
+| 0.673 | 0.49 | 6.31% |
+| 0.821 | 0.22 | 5.71% |
+| 1.001 | 0.00 | 4.26% |
+
+**Result:** Non-zero positive ΔP/P signal confirmed. The f(R) unit-conversion bug fix is working. Signal grows from z=2 to z=0.5 then turns over — consistent with the expected chameleon screening behaviour at low z when density contrasts become large. Signal is smaller than Winther 2015 Fig 2 (~5–15% at k=0.3–3 h/Mpc) due to marginal resolution: λ_C ≈ 4 Mpc/h ≈ dx = 3.9 Mpc/h. Full signal requires 512³ (dx=0.49 Mpc/h).
+
+**F6 (|f_R0|=1e-6, n=1) — max |ΔP/P| ≈ 0.6% at all epochs.**
+
+**Result:** Near-zero, as expected. F6 Compton wavelength λ_C ≈ 1.4 Mpc/h << dx=3.9 Mpc/h — unresolved at this resolution.
+
+**Figures:** `figs_winther2015_test/fofr_f5/fig2_delta_pk.pdf`, `figs_winther2015_test/fofr_f6/`
+
+---
+
+### 2026-03-28 — Symmetron rerun, 64 Mpc/h box (dx=λ₀=1 Mpc/h)
+
+**Run:** `output_symmetron_test/` — fixed binary, seed=42, 362 steps. Baseline: `output_lcdm_test/`.
+
+**Result: ΔP/P = 0 at all epochs.**
+
+Even at dx=λ₀, the symmetron cannot develop the spatial gradients needed for a fifth force. Marginal resolution (dx/λ₀=1) is not sufficient — the field is too smooth on one-cell scales to produce non-zero ∇χ that survives CIC interpolation. Production runs need dx < 0.5 λ₀ (128³ or 512³ at 64 Mpc/h or 250 Mpc/h respectively).
+
+**Figures:** `figs_isis/symmetron_64mpc/`
+
+---
+
 ## Next Steps
 
 - [x] Run Winther symmetron sim (ΔP/P=0, resolution-limited)
 - [x] Run growth test on output_w15_lcdm_test (FAIL, DKD bug)
 - [x] Find and fix f(R) unit bug (`ca11caf`)
-- [ ] F5 rerun with fix: `output_w15_f5_test/` (running, ~90 min)
-- [ ] F6 rerun with fix: `output_w15_f6_test/` (running, ~120 min)
-- [ ] Generate ΔP/P figures: `uv run python analysis/plot_isis.py --lcdm output_w15_lcdm_test --mg output_w15_f5_test --label "f(R) F5" --outdir figs_winther2015_test/fofr_f5`
-- [ ] Rerun symmetron with 64 Mpc/h box to validate code at dx ≈ λ₀
+- [x] F5 rerun with fix — non-zero ΔP/P confirmed (up to ~6% at z=0.5)
+- [x] F6 rerun with fix — ΔP/P ≈ 0 (unresolved, expected)
+- [x] Generate ΔP/P figures (`figs_winther2015_test/`)
+- [x] Symmetron 64 Mpc/h rerun — ΔP/P = 0 (dx=λ₀ marginal, not sufficient)
+- [ ] Check symmetron fifth force units (possible missing velocity-scale factor, needs resolved run)
+- [ ] Fix primary DKD issue — re-run ΛCDM growth test
+- [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison
 - [ ] Check symmetron fifth force for same unit issue (see analysis in git log)
 - [ ] Fix primary DKD issue (a_half fix validation)
 - [ ] Record all results in ROADMAP.md

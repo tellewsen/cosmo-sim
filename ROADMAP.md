@@ -78,14 +78,57 @@ where the drift equation has no a-factor and the issue disappears.
 
 ---
 
+#### Bug 4 — f(R) source missing (H₀a/c)² prefactor (FIXED, committed ca11caf)
+
+The quasi-static comoving f(R) equation is:
+```
+∇²f_R = (H₀a/c)²/3 × [δR − 3Ωm δ/a³]
+```
+where ∇ is w.r.t. comoving x in Mpc/h, H₀ = 100 km/s/(Mpc/h), c = 299,792 km/s.
+
+The missing factor (H₀/c)² ≈ 1.11×10⁻⁷ inflated the effective Compton wavelength by
+c/H₀ ≈ 3000. F5 (λ_C ≈ 4 Mpc/h physical) was treated as λ_C ≈ 0.0025 Mpc/h — completely
+sub-grid → total chameleon screening → ΔP/P ≈ 0.
+
+Also fixed: factor of 3 in the matter coupling (from 8πGρ̄_m = 3H₀²Ωm/a³).
+
+#### Bug 5 — f(R) fifth force missing c² multiplier (FIXED, committed ca11caf)
+
+`fofr_fifth_force` returns `(1/2)∇f_R` with f_R dimensionless and ∇ in (Mpc/h)⁻¹.
+Physical fifth force is `a₅ = (c²/2)∇f_R` in (km/s)²/(Mpc/h) — matching Poisson units.
+Applied multiplier c² = (299,792)² in `solve_scalar_field` in `simulation.rs`.
+
+---
+
+### In Progress
+
+#### Winther 2015 validation suite (64³, 250 Mpc/h box)
+
+Running as of 2026-03-28:
+- ΛCDM reference: `output_w15_lcdm_test/` — complete (367 steps)
+- Symmetron: `output_w15_symmetron_test/` — ΔP/P ≈ 0 (resolution-limited: dx=3.9 Mpc/h >> λ₀=1 Mpc/h)
+- f(R) F5: `output_w15_f5_test/` — running with fix (ca11caf); first snapshot at a=0.33 shows ΔP/P ≈ 0.01% (near zero at z=2, signal expected at z=0)
+- f(R) F6: `output_w15_f6_test/` — running with fix; F6 Compton wavelength λ_C≈1.4 Mpc/h, marginally unresolved at dx=3.9 Mpc/h
+
+Expected outcomes after fix (64³, 250 Mpc/h):
+- F5 (λ_C ≈ 4 Mpc/h): small but non-zero ΔP/P at z=0 (marginally resolved: λ_C/dx ≈ 1)
+- F6 (λ_C ≈ 1.4 Mpc/h): ΔP/P ≈ 0 (unresolved at this resolution)
+
+#### Symmetron 64 Mpc/h rerun
+
+Running: `output_symmetron_test/` with fixed binary (seed=42). Baseline: `output_lcdm_test/`.
+dx = 1 Mpc/h = λ₀ → marginal resolution. LCDM growth test: FAIL (same DKD bug).
+
+---
+
 ### TODO
 
+- [ ] Wait for F5/F6 z=0 snapshots; generate ΔP/P figures
+- [ ] Verify symmetron 64 Mpc/h run produces non-zero ΔP/P (dx ≈ λ₀)
+- [ ] Check symmetron fifth force units: possible missing velocity-scale factor analogous to c² in f(R) (flagged, cannot verify without resolved run)
 - [ ] Fix DKD timestep issue (implement Option A or B above)
-- [ ] Re-run ΛCDM test after fix, verify P(k)/P_linear ≈ 1 on large scales at a=0.33
-- [ ] Run Symmetron test simulation
-- [ ] Produce ISIS comparison figure: P_sym/P_ΛCDM vs k
-- [ ] Add scale-factor CFL to compute_dtau()
-- [ ] Consider switching to supercomoving time integration (RAMSES convention)
+- [ ] Re-run after DKD fix, verify P(k)/P_linear ≈ 1 on large scales
+- [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison
 - [ ] MPI support for cluster-scale runs
 
 ---
