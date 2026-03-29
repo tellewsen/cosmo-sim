@@ -5,3 +5,4 @@ figs*/
 *.png
 __pycache__/
 .venv/
+docs/superpowers/

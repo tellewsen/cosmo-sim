@@ -29,17 +29,20 @@ RUST_LOG=debug ./target/release/cosmo_sim run --params params.toml
 ## Tests and Analysis
 
 ```bash
+cargo test --features fofr              # all Rust unit tests
 python tests/validate_physics.py        # ~60 physics validation tests (numpy/scipy as reference)
 python tests/test_algorithms.py         # unittest suite grouped by module
-
-bash analysis/run_comparison.sh test symmetron    # 64³ quick run + ISIS comparison figures
-bash analysis/run_comparison.sh full symmetron    # 512³ production run
-bash analysis/run_comparison.sh test fofr
-
 cargo bench                             # benches/bench_gravity.rs, benches/bench_cic.rs
+
+# ΛCDM growth test (after running winther2015_lcdm_test.toml):
+uv run python analysis/pk_theory.py --params analysis/params/winther2015_lcdm_test.toml \
+    --growth-test output_w15_lcdm_test
+
+# ΔP/P comparison (after running ΛCDM + MG sim):
+uv run python analysis/check_delta_pk.py --lcdm output_w15_lcdm_test --mg output_w15_f5_test
 ```
 
-Python tools require Python ≥3.11 with numpy, matplotlib, scipy. Use `uv` or `poetry` to manage the environment (see `pyproject.toml`).
+Python tools require Python ≥3.11 with numpy, matplotlib, scipy. Use `uv run python` (see `pyproject.toml`).
 
 ## Architecture
 
@@ -91,8 +94,17 @@ Never run Python analysis inline (`python3 -c "..."`). Always write the script t
 `analysis/<name>.py` first, then run with `uv run python analysis/<name>.py`.
 This keeps every diagnostic reusable.
 
-## Known Issues (see ROADMAP.md)
+## Validation Status
 
-**DKD timestep accuracy at early times:** The leapfrog uses the scale factor at step start instead of the half-step. For large Δa/a (≈65% at early times with a: 0.02→0.033), this causes 3–7× excess P(k) power growth. A scale-factor CFL condition and use of `a_half` in the Poisson source have been partially implemented but not fully validated. This is the primary open issue.
+ΛCDM linear growth: **PASS** (growth ratio test, N_modes≥50, k<0.13 h/Mpc, all epochs).
+f(R) F5 fifth force: **CONFIRMED** (ΔP/P up to 8% at k=0.08 h/Mpc, z=0).
+Symmetron: unresolved at 64³/250 Mpc/h (dx=3.9 Mpc/h >> λ₀=1 Mpc/h).
+See `docs/validation/README.md` and `ROADMAP.md` for full results and bug history.
+
+## f(R) solver notes
+
+- `epsilon_mg` must be ≤ 1e-10 (source terms are O(10⁻⁸)); default 1e-5 is too loose.
+- Initialise from epoch-specific background `fofr_of_r(rbar_a, r0, p)`, not z=0 value.
+- F5 Compton wavelength λ_C ≈ 10.7 Mpc/h at z=0; F6 λ_C ≈ 3.4 Mpc/h.
 
 **Reference papers:** Llinares, Mota & Winther 2014 (ISIS), Teyssier 2002 (RAMSES), Hu & Sawicki 2007 (f(R)), Llinares & Mota 2014 (non-static Symmetron).
