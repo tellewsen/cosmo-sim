@@ -254,13 +254,18 @@ impl Simulation {
             self.chi.copy_from_slice(&chi_new);
             let f5_raw = fifth_force_grid(&self.chi, dx, n, self.a, &p);
             self.grid.set_domain_scalar(&self.chi);
-            // fifth_force_grid returns (β₀/a)∇χ with χ dimensionless and ∇ in
-            // (Mpc/h)⁻¹.  Physical fifth force: a₅ = β₀ c² ∇χ / a, so multiply by
-            // c² = (299 792 km/s)² to match Poisson solver units (km/s)²/(Mpc/h).
-            const C_CODE: Real = 299_792.458;
-            let c2 = C_CODE * C_CODE;
+            // fifth_force_grid returns (β₀/a)∇χ with χ dimensionless (O(1)) and
+            // ∇ in (Mpc/h)⁻¹.  Unlike f(R), the symmetron source has no (H₀/c)²
+            // prefactor, so χ ~ O(1) — multiplying by c² would give F₅ ~ 10⁷ F_N.
+            //
+            // Unit derivation: the natural velocity scale for the symmetron is
+            //   v₀ = H₀_h × λ₀   [km/s],   H₀_h = 100 km/s/(Mpc/h)
+            // so the factor v₀² converts (Mpc/h)⁻¹ → (km/s)²/(Mpc/h), matching
+            // the Poisson solver.  This gives F₅/F_N ~ 2β₀² at full coupling.
+            let v0 = 100.0 * p.lambda_0;   // H₀_h × λ₀  [km/s]
+            let factor = v0 * v0;
             let f5: Vec<[Real; 3]> = f5_raw.iter()
-                .map(|v| [v[0] * c2, v[1] * c2, v[2] * c2])
+                .map(|v| [v[0] * factor, v[1] * factor, v[2] * factor])
                 .collect();
             return Some(f5);
         }
