@@ -81,38 +81,58 @@ Applied multiplier c² = (299,792)² in `solve_scalar_field` in `simulation.rs`.
 
 ### In Progress
 
-#### Winther 2015 validation suite (64³, 250 Mpc/h box) — COMPLETE
+#### Winther 2015 validation suite (64³, 250 Mpc/h box)
 
-All 64³ runs finished with fully corrected binary (`8a4f813`):
+ΛCDM and f(R) F5 confirmed. F6 rerun in progress.
+
 - ΛCDM reference: `output_w15_lcdm_test/` — 367 steps, growth test ALL PASS
 - Symmetron: `output_w15_symmetron_test/` — ΔP/P = 0 (dx=3.9 Mpc/h >> λ₀=1 Mpc/h, unresolved)
-- f(R) F5: `output_w15_f5_test/` — ΔP/P = 0 (see note below)
-- f(R) F6: `output_w15_f6_test/` — ΔP/P = 0 (unresolved, expected)
+- f(R) F5: `output_w15_f5_test/` — ΔP/P up to 8% at k=0.08 h/Mpc, z=0 (CONFIRMED SIGNAL)
+- f(R) F6: `output_w15_f6_test/` — rerunning with fixed solver (expected ΔP/P ≈ 0, sub-grid)
 
-**f(R) F5 result (with correct H₀=h·100=70.4):**
-The H₀ fix reduced the effective fofr Compton wavelength. With H₀=70.4:
-λ_C ≈ 2.8 Mpc/h < dx = 3.9 Mpc/h → field fully sub-grid → ΔP/P = 0.
+**f(R) solver bugs fixed (commit ade6903, 2026-03-29):**
 
-The earlier run (ca11caf only, H₀=100 bug) showed 4–6% ΔP/P, but that was an artefact:
-the wrong H₀ accidentally inflated λ_C to ≈4 Mpc/h ≈ dx, making F5 marginally resolved.
-That signal was NOT the true f(R) fifth force.
+Two bugs caused the solver to exit at iteration 0 doing no work:
 
-All modified gravity models require 512³ (dx=0.49 Mpc/h) to resolve their respective
-Compton/Compton wavelengths at 250 Mpc/h.
+1. **epsilon_mg = 1e-5 too loose.** Actual f(R) residuals are O(10⁻⁸). The initial residual
+   ~9×10⁻⁷ satisfied epsilon before any V-cycles ran. Fixed: default 1e-5 → 1e-10.
+
+2. **Wrong epoch initialisation.** Used z=0 background `fofr_of_r(r0, r0)` at all epochs.
+   At a=0.33 the correct background is 10× smaller. Fixed: `fofr_of_r(rbar_a, r0)`.
+
+**Compton wavelength (correct formula):**
+
+m² = (h0·a/c)² × R̄(a) / (9·(n+1)·|f̄_R(a)|),  λ_C = 1/√m² [Mpc/h]
+
+At a=1: F5 → λ_C ≈ 10.7 Mpc/h >> dx=3.9 Mpc/h (well resolved)
+        F6 → λ_C ≈ 3.4 Mpc/h < dx=3.9 Mpc/h (sub-grid → ΔP/P ≈ 0 expected)
+
+**F5 ΔP/P results (fixed solver, seed=42, 64³ 250 Mpc/h):**
+
+| a | z | ΔP/P (k≈0.037) | ΔP/P (k≈0.081) |
+|---|---|---|---|
+| 0.332 | 2.01 | +0.07% | +0.39% |
+| 0.503 | 0.99 | +0.49% | +2.23% |
+| 0.672 | 0.49 | +1.16% | +4.65% |
+| 0.821 | 0.22 | +1.69% | +6.44% |
+| 1.001 | 0.00 | +2.18% | +8.00% |
+
+Monotonically growing signal confirms the fifth force is active and correctly resolved.
 
 #### Symmetron 64 Mpc/h rerun
 
-Running: `output_symmetron_test/` with fixed binary (seed=42). Baseline: `output_lcdm_test/`.
-dx = 1 Mpc/h = λ₀ → marginal resolution. LCDM growth test: PASS (see DKD section).
+Completed: `output_symmetron_test/` with fixed binary (seed=42). Baseline: `output_lcdm_test/`.
+dx = 1 Mpc/h = λ₀ → marginal resolution → ΔP/P = 0 (expected).
 
 ---
 
 ### TODO
 
-- [x] Wait for F5/F6 z=0 snapshots — done; ΔP/P = 0 at correct H₀ (unresolved, expected)
 - [x] Verify symmetron 64 Mpc/h — ΔP/P = 0 (dx=λ₀ marginal, unresolved)
 - [x] ΛCDM linear growth — ALL PASS (growth ratio test, N_modes≥50, k<0.13 h/Mpc)
 - [x] Fix pk_theory.py growth test: ratio method replaces absolute P_sim/P_lin
+- [x] Fix f(R) solver epsilon and epoch init (ade6903) — F5 confirmed with non-zero ΔP/P
+- [ ] F6 rerun with fixed solver (in progress)
 - [ ] Check symmetron fifth force units: possible missing velocity-scale factor (needs resolved run)
 - [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison
 - [ ] MPI support for cluster-scale runs

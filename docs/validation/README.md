@@ -188,33 +188,71 @@ second entry below.
 
 ---
 
-### 2026-03-28 (second) — f(R) F5 and F6 with fully corrected binary (8a4f813)
+### 2026-03-28 (second) — f(R) F5 and F6 with corrected binary (8a4f813) — SUPERSEDED
 
-**Run:** `output_w15_f5_test/` and `output_w15_f6_test/` re-run with commit `8a4f813`
-(H₀_phys = h·100 = 70.4 km/s/Mpc in both Poisson source and fofr source). seed=42, 367 steps.
-ΛCDM baseline: `output_w15_lcdm_test/` also from `8a4f813`.
+**Note:** These runs used H₀ and Compton/force units correctly, but the multigrid solver
+had two additional bugs (see 2026-03-29 entry). ΔP/P=0 was incorrectly attributed to
+resolution; actual cause was a broken solver.
 
-**F5 (|f_R0|=1e-5, n=1) — ΔP/P = 0 at all epochs.**
+**Run:** `output_w15_f5_test/` and `output_w15_f6_test/` re-run with commit `8a4f813`,
+seed=42, 367 steps. Reported ΔP/P=0 for both F5 and F6.
 
-**F6 (|f_R0|=1e-6, n=1) — ΔP/P = 0 at all epochs.**
+**Why this was wrong:** epsilon_mg=1e-5 was too loose; initial residual ~9×10⁻⁷ < 1e-5,
+so the solver exited at iteration 0 having done zero V-cycles. Results are identical to
+pure ΛCDM dynamics.
 
-**Result: Both fully unresolved at this resolution.**
+---
 
-With the correct H₀_phys = 70.4 km/s/Mpc, the fofr source prefactor (H₀a/c)² is
-reduced by h² ≈ 0.496×. This decreases the effective Compton wavelength. For F5:
+### 2026-03-29 — f(R) solver bugs fixed; F5 confirmed resolved (commit ade6903)
 
-- Old (H₀=100): λ_C (in code) was inflated, ≈ 4 Mpc/h — marginally resolved at dx=3.9 Mpc/h
-- New (H₀=70.4): λ_C (correct) ≈ 2.8 Mpc/h < dx=3.9 Mpc/h — fully sub-grid → ΔP/P = 0
+**Two bugs fixed:**
 
-The chameleon mechanism screens the field completely on all grid cells.
+1. **epsilon_mg too loose (1e-5 → 1e-10):** The f(R) source terms are O((H₀a/c)² × Ω_m × δ/a³) ≈ 10⁻⁸.
+   With epsilon > source_magnitude the initial residual already satisfied convergence — the solver
+   did zero V-cycles and produced pure ΛCDM results.
 
-**Conclusion:** Both F5 and F6 require higher resolution (512³, dx=0.49 Mpc/h) to resolve
-the fifth force at 250 Mpc/h. The 64³ runs cannot distinguish f(R) from ΛCDM.
+2. **Wrong epoch initialisation:** `solve_fofr` initialised the field from the z=0 background
+   `fofr_of_r(r0, r0, p)` at all epochs. At a=0.33 (z=2) the correct background is
+   `fofr_of_r(rbar_a, r0, p)` ≈ −9.8×10⁻⁷ (10× smaller). Using the z=0 value created a
+   spurious residual of ~10⁻⁷ that could mask convergence.
 
-| Configuration | dx [Mpc/h] | dx/λ_C (F5) | Expected signal |
-|---|---|---|---|
-| 250 Mpc/h, 64³ (this run) | 3.9 | > 1 | None (unresolved) |
-| 250 Mpc/h, 512³ (production) | 0.49 | < 1 | Full signal |
+After both fixes: solver converges in exactly 1 V-cycle per step (residual 1.87×10⁻⁷ → 5×10⁻¹³).
+
+**Compton wavelength (correct derivation):**
+
+The linearised Compton mass in comoving (Mpc/h)⁻² is:
+```
+m² = (h0·a/c)² / 3 × R̄(a) / (3·(n+1)·|f̄_R(a)|)
+```
+where h0 = h × 100 = 70.4 km/s/Mpc, c = 299 792 km/s, R̄ in units of H₀².
+
+At a=1: R̄ ≈ 9.58, |f̄_R| = fR0.
+
+| Model | fR0 | λ_C [Mpc/h] at z=0 | dx [Mpc/h] | Resolved? |
+|---|---|---|---|---|
+| F5 | 1e-5 | 10.7 | 3.9 | YES (λ_C ≫ dx) |
+| F6 | 1e-6 | 3.4 | 3.9 | NO (λ_C < dx) |
+
+**F5 (|f_R0|=1e-5) — ΔP/P results (64³, 250 Mpc/h, seed=42, commit ade6903):**
+
+| a | z | ΔP/P at k=0.037 | ΔP/P at k=0.074 | ΔP/P at k=0.081 |
+|---|---|---|---|---|
+| 0.332 | 2.01 | +0.07% | +0.30% | +0.39% |
+| 0.503 | 0.99 | +0.49% | +1.76% | +2.23% |
+| 0.672 | 0.49 | +1.16% | +3.72% | +4.65% |
+| 0.821 | 0.22 | +1.69% | +5.14% | +6.44% |
+| 1.001 | 0.00 | +2.18% | +6.33% | +8.00% |
+
+ΔP/P grows monotonically in both k and time — consistent with the expected progressive
+fifth-force enhancement of structure growth. At k=0.08 h/Mpc (λ ≈ 78 Mpc/h ≫ λ_C),
+the full linear-regime ΔP/P is captured.
+
+The relatively modest amplitude (~8% at k=0.08) compared to the Winther 2015 paper
+(~20–50% at k~0.3–1 h/Mpc) is expected: our resolved k-range (below the grid Nyquist)
+is all in the linear regime where the fifth force enhancement is smaller than in the
+nonlinear regime probed by 512³ runs.
+
+**F6 (|f_R0|=1e-6) — run in progress.** Expected ΔP/P ≈ 0 (λ_C = 3.4 Mpc/h < dx = 3.9 Mpc/h).
 
 ---
 
@@ -271,9 +309,11 @@ from a=0.33 to a=1.0.
 - [x] Find and fix f(R) unit bug (`ca11caf`)
 - [x] Fix H₀ physical units in Poisson and fofr sources (`8a4f813`)
 - [x] ΛCDM growth test: new ratio method (N_modes≥50, k<0.13 h/Mpc) — ALL PASS
-- [x] F5/F6 rerun with fully corrected binary — ΔP/P=0 (unresolved, correct result)
 - [x] Symmetron 64 Mpc/h rerun — ΔP/P = 0 (dx=λ₀ marginal, not sufficient)
 - [x] ΛCDM linear growth confirmed correct (σ₈ diagnostic script bug found and documented)
+- [x] Fix f(R) solver epsilon (1e-5→1e-10) and epoch init (`ade6903`)
+- [x] F5 confirmed resolved: λ_C=10.7 Mpc/h >> dx=3.9 Mpc/h, ΔP/P up to 8% at z=0
+- [ ] F6 rerun with fixed solver (in progress — expected ΔP/P≈0, λ_C=3.4 < dx=3.9)
 - [ ] Check symmetron fifth force units (needs resolved run — 128³ or 512³)
 - [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison
 - [ ] MPI support
