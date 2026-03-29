@@ -126,6 +126,41 @@ dx = 1 Mpc/h = λ₀ → marginal resolution → ΔP/P = 0 (expected).
 
 ---
 
+### Hypothesis: Symmetron fifth force missing c² unit factor
+
+**Status: CONFIRMED by code inspection (2026-03-29), fix pending**
+
+**Observation:** `output_symmetron_test/` shows ΔP/P = 0 at all epochs and k-modes
+despite the symmetron field being solved and the code compiling cleanly.
+
+**Root cause identified:** `fifth_force_grid()` in `src/scalar_field/symmetron.rs`
+returns `(β₀/a)∇χ` with χ dimensionless and ∇ in (Mpc/h)⁻¹ — pure dimensionless
+gradient, NOT an acceleration. The kick step adds this directly to particle velocities
+alongside the gravitational acceleration (units: (km/s)²/(Mpc/h)), so the symmetron
+force is suppressed by a factor of c² ≈ 9×10¹⁶ — undetectable.
+
+**Parallel with f(R):** The identical bug was present in f(R) and fixed in `ca11caf`:
+```rust
+// In simulation.rs — f(R) branch (lines 273–280), CORRECT:
+const C_CODE: Real = 299_792.458;
+let c2 = C_CODE * C_CODE;
+let f5 = f5_raw.iter().map(|v| [v[0]*c2, v[1]*c2, v[2]*c2]).collect();
+```
+The symmetron branch (lines 255–257) does **not** apply this multiplier.
+
+**Fix:** In `src/simulation.rs` lines 255–257, rename `f5` → `f5_raw` and apply the
+same c² block as the f(R) branch. One-line code change + the scaling block.
+
+**Validation plan:**
+1. Apply fix, commit with unit derivation in message body
+2. `cargo build --release --features symmetron`
+3. `rm -rf output_symmetron_test && ./target/release/cosmo_sim run --params analysis/params/symmetron_test.toml --seed 42`
+4. `uv run python analysis/check_delta_pk.py --lcdm output_lcdm_test --mg output_symmetron_test`
+5. Pass criterion: ΔP/P > 0 at k=0.1–1 h/Mpc, z=0 (may be small ~1–5% due to dx≈λ₀)
+6. Update ROADMAP with measured ΔP/P and resolution note
+
+---
+
 ### TODO
 
 - [x] Verify symmetron 64 Mpc/h — ΔP/P = 0 (dx=λ₀ marginal, unresolved)
@@ -140,7 +175,8 @@ dx = 1 Mpc/h = λ₀ → marginal resolution → ΔP/P = 0 (expected).
   ./target/release/cosmo_sim run --params analysis/params/winther2015_f6_test.toml --seed 42 --restart output_w15_f6_test/snapshot_0003.bin
   ```
   Then: `uv run python analysis/check_delta_pk.py --lcdm output_w15_lcdm_test --mg output_w15_f6_test`
-- [ ] Check symmetron fifth force units: possible missing velocity-scale factor (needs resolved run)
+- [ ] Fix symmetron c² unit bug in `src/simulation.rs:255` (hypothesis confirmed — see above)
+- [ ] Re-run symmetron 64 Mpc/h after fix; verify ΔP/P > 0
 - [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison
 - [ ] MPI support for cluster-scale runs
 

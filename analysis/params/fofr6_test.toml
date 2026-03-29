@@ -1,0 +1,41 @@
+# f(R) Hu-Sawicki run — small box for quick tests / development
+# Parameters match "fofr6" from Llinares et al. (2014):  |f_{R0}| = 10⁻⁶, n = 1
+# Compile with:  cargo build --release --features fofr
+
+[run]
+box_size       = 64.0
+n_grid         = 64
+levelmax       = 0
+refine_thr     = 8
+a_init         = 0.02
+a_final        = 1.0
+dtau_max       = 5e-5
+courant_factor = 0.8
+
+[cosmology]
+omega_m      = 0.267
+omega_lambda = 0.733
+omega_b      = 0.0449
+h            = 0.719
+n_s          = 0.963
+sigma8       = 0.801
+
+[gravity]
+epsilon   = 1e-4
+n_mg_iter = 50
+n_smooth  = 2
+
+[particles]
+n_part = 64
+m_part = 0.0
+
+[scalar_field]            # Hu-Sawicki f(R) — "fofr6" in ISIS paper
+fofr0     = 1e-6          # |f_{R0}| present-day background value
+n_fofr    = 1.0           # power-law index
+epsilon_mg = 1e-10
+
+[output]
+outdir   = "output_fofr6_test"
+n_output = 5
+a_out    = [0.33, 0.5, 0.67, 0.82, 1.0]
+hdf5     = false
