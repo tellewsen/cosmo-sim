@@ -252,8 +252,16 @@ impl Simulation {
             };
             let chi_new = solve_symmetron(rho, self.a, dx, n, &p);
             self.chi.copy_from_slice(&chi_new);
-            let f5 = fifth_force_grid(&self.chi, dx, n, self.a, &p);
+            let f5_raw = fifth_force_grid(&self.chi, dx, n, self.a, &p);
             self.grid.set_domain_scalar(&self.chi);
+            // fifth_force_grid returns (β₀/a)∇χ with χ dimensionless and ∇ in
+            // (Mpc/h)⁻¹.  Physical fifth force: a₅ = β₀ c² ∇χ / a, so multiply by
+            // c² = (299 792 km/s)² to match Poisson solver units (km/s)²/(Mpc/h).
+            const C_CODE: Real = 299_792.458;
+            let c2 = C_CODE * C_CODE;
+            let f5: Vec<[Real; 3]> = f5_raw.iter()
+                .map(|v| [v[0] * c2, v[1] * c2, v[2] * c2])
+                .collect();
             return Some(f5);
         }
 
