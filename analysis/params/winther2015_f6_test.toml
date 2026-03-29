@@ -32,7 +32,7 @@ m_part = 0.0
 [scalar_field]            # Hu-Sawicki f(R) "F6" — Winther et al. (2015)
 fofr0      = 1e-6         # |f_{R0}|, more screened than F5
 n_fofr     = 1.0
-epsilon_mg = 1e-5
+epsilon_mg = 1e-10
 
 [output]
 outdir   = "output_w15_f6_test"

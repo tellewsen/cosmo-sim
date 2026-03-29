@@ -262,7 +262,7 @@ impl Simulation {
             let p = FofrParams {
                 fofr0: sf.fofr0.unwrap(),
                 n: sf.n_fofr.unwrap_or(1.0),
-                epsilon: sf.epsilon_mg.unwrap_or(1e-5),
+                epsilon: sf.epsilon_mg.unwrap_or(1e-10),
                 max_iter: 150,
                 n_smooth: 2,
             };

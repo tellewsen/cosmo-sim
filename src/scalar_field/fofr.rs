@@ -44,7 +44,7 @@ pub struct FofrParams {
 
 impl Default for FofrParams {
     fn default() -> Self {
-        Self { fofr0: 1e-5, n: 1.0, epsilon: 1e-5, max_iter: 150, n_smooth: 2 }
+        Self { fofr0: 1e-5, n: 1.0, epsilon: 1e-10, max_iter: 150, n_smooth: 2 }
     }
 }
 
@@ -277,8 +277,13 @@ fn fofr_v_cycle(
 
 /// Solve the Hu-Sawicki f_R equation to convergence.
 ///
-/// Initialises from the background value  f_R(R̄₀)  and returns the field.
-/// Uses FAS V-cycle multigrid for O(N log N) convergence per outer iteration.
+/// Initialises from the epoch-correct background value f_R(R̄(a)) — NOT the
+/// z=0 value f_R(R̄₀).  At mean density the source term is then identically
+/// zero and no iterations are needed; density perturbations drive the field
+/// away from background.  Using the z=0 background as a fixed initial guess
+/// causes a residual of order (H₀a/c)² × (R̄(a)−R̄₀)/3 at every cell, which
+/// is typically ≈10⁻⁷ — above the correct solver tolerance (~10⁻¹⁰) and
+/// causes spurious early exit if a loose epsilon_mg is used.
 pub fn solve_fofr(
     rho:   &[Real],
     a:     Real,
@@ -289,7 +294,10 @@ pub fn solve_fofr(
 ) -> Vec<Real> {
     let r0     = r_bar(1.0, cosmo);
     let rbar_a = r_bar(a, cosmo);
-    let bg_val = fofr_of_r(r0, r0, p);
+    // Epoch-specific background: f_R(R̄(a)) = −n |f_{R0}| (R̄₀/R̄(a))^{n+1}.
+    // At z=0 this equals the z=0 background −n|f_{R0}|; at earlier epochs it
+    // is smaller in magnitude (field is closer to zero at higher redshift).
+    let bg_val = fofr_of_r(rbar_a, r0, p);
     let mut u  = vec![bg_val; n * n * n];
 
     for iter in 0..p.max_iter {

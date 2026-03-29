@@ -32,7 +32,7 @@ m_part = 0.0
 [scalar_field]            # Hu-Sawicki f(R) — "fofr5" in ISIS paper
 fofr0     = 1e-5          # |f_{R0}| present-day background value
 n_fofr    = 1.0           # power-law index
-epsilon_mg = 1e-5
+epsilon_mg = 1e-10
 
 [output]
 outdir   = "output_fofr_test"
