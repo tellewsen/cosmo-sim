@@ -126,38 +126,85 @@ dx = 1 Mpc/h = λ₀ → marginal resolution → ΔP/P = 0 (expected).
 
 ---
 
-### Hypothesis: Symmetron fifth force missing c² unit factor
+### Symmetron unit bug investigation (2026-03-29)
 
-**Status: CONFIRMED by code inspection (2026-03-29), fix pending**
+#### Bug 6 — wrong c² factor applied to symmetron fifth force (FIXED, commit 2ee9898)
 
-**Observation:** `output_symmetron_test/` shows ΔP/P = 0 at all epochs and k-modes
-despite the symmetron field being solved and the code compiling cleanly.
+**Status: fixed, but sign bug remains (see Bug 7 below)**
 
-**Root cause identified:** `fifth_force_grid()` in `src/scalar_field/symmetron.rs`
-returns `(β₀/a)∇χ` with χ dimensionless and ∇ in (Mpc/h)⁻¹ — pure dimensionless
-gradient, NOT an acceleration. The kick step adds this directly to particle velocities
-alongside the gravitational acceleration (units: (km/s)²/(Mpc/h)), so the symmetron
-force is suppressed by a factor of c² ≈ 9×10¹⁶ — undetectable.
+The previous agent (commit 068f770) copied the f(R) c² multiplier verbatim to the
+symmetron branch. This was wrong: the symmetron source equation has no (H₀/c)² prefactor,
+so χ ~ O(1). Multiplying by c² ≈ 9×10¹⁰ (km/s)² gave F₅ ~ 10⁷ × F_N, collapsing
+the timestep to ~10⁻⁷ and v_max ≈ 9c.
 
-**Parallel with f(R):** The identical bug was present in f(R) and fixed in `ca11caf`:
+**Fix:** replaced c² with `(H₀_h × λ₀)² = (100 × λ₀)² (km/s)²` — the natural velocity
+scale for the symmetron field. This converts (Mpc/h)⁻¹ → (km/s)²/(Mpc/h).
+
+Unit derivation:
+- `fifth_force_grid` returns `(β₀/a)∇χ` in (Mpc/h)⁻¹ (χ dimensionless, ∇ in (Mpc/h)⁻¹)
+- Multiply by `v₀² = (H₀_h λ₀ km/s)²` → (km/s)²/(Mpc/h) matching Poisson output
+- For λ₀=1: factor = 10⁴ (km/s)² → F₅/F_N ~ 2β₀² at full coupling ✓
+
+**Post-fix run result (seed=42, 64³ 64 Mpc/h):**
+
+| a | z | ΔP/P (k≈0.10) | max |ΔP/P| |
+|---|---|---|---|
+| 0.330 | 2.03 | 0.000 | 0.000 |
+| 0.502 | 0.99 | 0.000 | 0.000 |
+| 0.672 | 0.49 | −0.05% | 4.49% |
+| 0.823 | 0.22 | −0.10% | 7.85% |
+| 1.000 | 0.00 | −0.13% | 8.05% |
+
+Force IS active (non-zero ΔP/P starting at a > a_SSB=0.5) ✓
+But sign is NEGATIVE — symmetron shows LESS power than ΛCDM — see Bug 7.
+
+---
+
+#### Bug 7 — symmetron fifth force has wrong sign (REPULSIVE instead of ATTRACTIVE)
+
+**Status: identified, fix pending**
+
+**Observation:** ΔP/P < 0 after the unit fix. The symmetron fifth force should ENHANCE
+clustering (more attractive force → ΔP/P > 0). The negative sign means particles are
+being pushed APART rather than together.
+
+**Root cause:** In `src/scalar_field/symmetron.rs`, `fifth_force_grid()`:
+
 ```rust
-// In simulation.rs — f(R) branch (lines 273–280), CORRECT:
-const C_CODE: Real = 299_792.458;
-let c2 = C_CODE * C_CODE;
-let f5 = f5_raw.iter().map(|v| [v[0]*c2, v[1]*c2, v[2]*c2]).collect();
+let factor = -p.beta_0 / a;  // intended to recover +∇χ from grad_phi's -∇χ
+grad.into_iter().map(|g| [factor * g[0], ...]).collect()
+// Returns: (β₀/a) ∇χ  — points AWAY from masses (REPULSIVE!)
 ```
-The symmetron branch (lines 255–257) does **not** apply this multiplier.
 
-**Fix:** In `src/simulation.rs` lines 255–257, rename `f5` → `f5_raw` and apply the
-same c² block as the f(R) branch. One-line code change + the scaling block.
+`grad_phi` returns `−∇χ`. Multiplying by `factor = −β₀/a` gives `+(β₀/a)∇χ`.
+Since χ is suppressed near overdensities, `∇χ` points AWAY from matter → repulsive.
+
+**Correct behaviour:** For an attractive fifth force (toward masses), the output must be
+`−(β₀/a)∇χ`. Since `grad_phi` already computes `−∇χ`, the fix is:
+
+```rust
+// In src/scalar_field/symmetron.rs, fifth_force_grid():
+let factor = p.beta_0 / a;   // no minus sign — grad_phi(-∇χ) × (+β₀/a) = -(β₀/a)∇χ
+```
+
+**Physical check:**
+- Gravity: `grad_phi(&phi)` returns `−∇Φ`, points toward potential minimum = toward matter ✓
+- Symmetron SHOULD work the same way: `grad_phi(&chi)` × positive factor = `−(β₀/a)∇χ`,
+  points toward χ minimum = toward matter ✓
+
+**Fix location:** `src/scalar_field/symmetron.rs`, line ~281:
+  change `let factor = -p.beta_0 / a;` → `let factor = p.beta_0 / a;`
+
+Also update the comment: "grad_phi returns −∇χ; multiply by +β₀/a to get −(β₀/a)∇χ
+which points toward matter (attractive)."
 
 **Validation plan:**
-1. Apply fix, commit with unit derivation in message body
+1. Apply fix in `symmetron.rs`
 2. `cargo build --release --features symmetron`
 3. `rm -rf output_symmetron_test && ./target/release/cosmo_sim run --params analysis/params/symmetron_test.toml --seed 42`
 4. `uv run python analysis/check_delta_pk.py --lcdm output_lcdm_test --mg output_symmetron_test`
-5. Pass criterion: ΔP/P > 0 at k=0.1–1 h/Mpc, z=0 (may be small ~1–5% due to dx≈λ₀)
-6. Update ROADMAP with measured ΔP/P and resolution note
+5. Pass criterion: ΔP/P > 0 at k > 0.1 h/Mpc at z=0 (monotonically growing with a)
+6. Expected: ~5–15% enhancement at k=0.1–0.3 h/Mpc at z=0 (limited by dx=λ₀ resolution)
 
 ---
 
@@ -168,8 +215,9 @@ same c² block as the f(R) branch. One-line code change + the scaling block.
 - [x] Fix pk_theory.py growth test: ratio method replaces absolute P_sim/P_lin
 - [x] Fix f(R) solver epsilon and epoch init (ade6903) — F5 confirmed with non-zero ΔP/P
 - [x] F6 rerun with fixed solver — DONE; ΔP/P = 0 (sub-grid, expected)
-- [ ] Fix symmetron c² unit bug in `src/simulation.rs:255` (hypothesis confirmed — see above)
-- [ ] Re-run symmetron 64 Mpc/h after fix; verify ΔP/P > 0
+- [x] Fix symmetron unit factor: `(H₀_h λ₀)²` instead of c² (commit 2ee9898) — force now active
+- [ ] Fix symmetron sign bug: `fifth_force_grid` must return `−(β₀/a)∇χ` (attractive)
+- [ ] Re-run symmetron 64 Mpc/h after sign fix; verify ΔP/P > 0
 - [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison
 - [ ] MPI support for cluster-scale runs
 
