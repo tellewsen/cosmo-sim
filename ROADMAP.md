@@ -132,7 +132,14 @@ dx = 1 Mpc/h = λ₀ → marginal resolution → ΔP/P = 0 (expected).
 - [x] ΛCDM linear growth — ALL PASS (growth ratio test, N_modes≥50, k<0.13 h/Mpc)
 - [x] Fix pk_theory.py growth test: ratio method replaces absolute P_sim/P_lin
 - [x] Fix f(R) solver epsilon and epoch init (ade6903) — F5 confirmed with non-zero ΔP/P
-- [ ] F6 rerun with fixed solver (in progress)
+- [ ] F6 rerun with fixed solver — **RESUME NEEDED**
+  4/5 snapshots written (z=2, 1, 0.49, 0.22). Stopped at snapshot_0003.bin (a=0.821).
+  Resume command:
+  ```
+  cargo build --release --features fofr
+  ./target/release/cosmo_sim run --params analysis/params/winther2015_f6_test.toml --seed 42 --restart output_w15_f6_test/snapshot_0003.bin
+  ```
+  Then: `uv run python analysis/check_delta_pk.py --lcdm output_w15_lcdm_test --mg output_w15_f6_test`
 - [ ] Check symmetron fifth force units: possible missing velocity-scale factor (needs resolved run)
 - [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison
 - [ ] MPI support for cluster-scale runs
