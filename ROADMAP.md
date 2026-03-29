@@ -88,7 +88,7 @@ Applied multiplier c² = (299,792)² in `solve_scalar_field` in `simulation.rs`.
 - ΛCDM reference: `output_w15_lcdm_test/` — 367 steps, growth test ALL PASS
 - Symmetron: `output_w15_symmetron_test/` — ΔP/P = 0 (dx=3.9 Mpc/h >> λ₀=1 Mpc/h, unresolved)
 - f(R) F5: `output_w15_f5_test/` — ΔP/P up to 8% at k=0.08 h/Mpc, z=0 (CONFIRMED SIGNAL)
-- f(R) F6: `output_w15_f6_test/` — rerunning with fixed solver (expected ΔP/P ≈ 0, sub-grid)
+- f(R) F6: `output_w15_f6_test/` — ΔP/P = 0 (λ_C≈3.4 Mpc/h < dx=3.9 Mpc/h, sub-grid, expected)
 
 **f(R) solver bugs fixed (commit ade6903, 2026-03-29):**
 
@@ -167,14 +167,7 @@ same c² block as the f(R) branch. One-line code change + the scaling block.
 - [x] ΛCDM linear growth — ALL PASS (growth ratio test, N_modes≥50, k<0.13 h/Mpc)
 - [x] Fix pk_theory.py growth test: ratio method replaces absolute P_sim/P_lin
 - [x] Fix f(R) solver epsilon and epoch init (ade6903) — F5 confirmed with non-zero ΔP/P
-- [ ] F6 rerun with fixed solver — **RESUME NEEDED**
-  4/5 snapshots written (z=2, 1, 0.49, 0.22). Stopped at snapshot_0003.bin (a=0.821).
-  Resume command:
-  ```
-  cargo build --release --features fofr
-  ./target/release/cosmo_sim run --params analysis/params/winther2015_f6_test.toml --seed 42 --restart output_w15_f6_test/snapshot_0003.bin
-  ```
-  Then: `uv run python analysis/check_delta_pk.py --lcdm output_w15_lcdm_test --mg output_w15_f6_test`
+- [x] F6 rerun with fixed solver — DONE; ΔP/P = 0 (sub-grid, expected)
 - [ ] Fix symmetron c² unit bug in `src/simulation.rs:255` (hypothesis confirmed — see above)
 - [ ] Re-run symmetron 64 Mpc/h after fix; verify ΔP/P > 0
 - [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison
