@@ -276,9 +276,9 @@ pub fn fifth_force_grid(
 ) -> Vec<[Real; 3]> {
     use crate::gravity::poisson::grad_phi;
     let grad = grad_phi(chi, dx, n);
-    // grad_phi returns −∇χ (negative gradient, like gravitational acceleration).
-    // The fifth force is a_5 = (β₀/a) ∇χ, so negate to recover +∇χ.
-    let factor = -p.beta_0 / a;
+    // grad_phi returns −∇χ; multiply by +β₀/a to get −(β₀/a)∇χ
+    // which points toward matter (attractive).
+    let factor = p.beta_0 / a;
     grad.into_iter().map(|g| [factor * g[0], factor * g[1], factor * g[2]]).collect()
 }
 
