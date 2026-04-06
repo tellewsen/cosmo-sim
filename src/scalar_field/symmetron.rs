@@ -502,15 +502,14 @@ pub mod tests {
         let f5 = fifth_force_grid(&chi, dx, n, a, &p);
 
         // At cell (n/4, 0, 0): x = L/4, cos → decreasing → ∂χ/∂x < 0
-        // fifth_force_grid uses grad_phi which returns -∇Φ; we want +∇χ
-        // so check sign: the fifth force at x=L/4 should point in -x direction
-        // (toward lower χ = toward the void)
+        // grad_phi returns −∇χ, and fifth_force_grid multiplies by +β₀/a,
+        // giving −(β₀/a)∇χ.  At x=L/4 where ∂χ/∂x < 0, the result is
+        // −(β₀/a)(negative) = positive → force points in +x direction
+        // (toward the χ minimum = toward matter, i.e. attractive).
         let c_quarter = idx3p((n/4) as isize, 0, 0, n);
         let fx = f5[c_quarter][0];
         println!("Fifth force x-component at L/4: {fx:.4}");
-        // At x=L/4: χ = cos(2πx/L) is decreasing → ∂χ/∂x < 0
-        // → fifth force = (β₀/a) ∂χ/∂x < 0 (points in −x direction)
-        assert!(fx < -0.1, "Fifth force should be negative at x=L/4: {fx:.4}");
+        assert!(fx > 0.1, "Fifth force should be positive (attractive) at x=L/4: {fx:.4}");
     }
 
     // ── Non-static placeholder ────────────────────────────────────────────────

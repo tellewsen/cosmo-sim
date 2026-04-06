@@ -34,6 +34,8 @@ pub mod analysis {
     pub mod power_spectrum;
 }
 
+pub mod mpi;
+
 pub mod simulation;
 
 // Top-level re-exports used by main.rs and integration tests

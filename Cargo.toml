@@ -26,6 +26,7 @@ thiserror    = "2"
 clap         = { version = "4", features = ["derive"] }
 rustfft      = { version = "6", optional = true }
 hdf5         = { version = "0.8", optional = true }
+mpi          = { version = "0.8", optional = true }
 
 [dev-dependencies]
 approx     = "0.5"
@@ -37,6 +38,7 @@ symmetron   = []
 fofr        = []
 hdf5_output = ["hdf5"]
 fft_pm      = ["rustfft"]
+mpi_parallel = ["mpi"]
 
 [[bench]]
 name = "bench_gravity"
