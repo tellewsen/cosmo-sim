@@ -6,6 +6,7 @@
 
 use clap::{Parser, Subcommand};
 use cosmo_sim::{Simulation, example_config};
+use cosmo_sim::mpi::MpiContext;
 use cosmo_sim::utils::config::Config;
 
 #[derive(Parser)]
@@ -43,6 +44,10 @@ enum Commands {
 }
 
 fn main() {
+    // MPI must be initialised before any other work.  In non-MPI builds
+    // this returns a single-rank stub with no side effects.
+    let mpi_ctx = MpiContext::init();
+
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info")
     ).init();
@@ -67,13 +72,13 @@ fn main() {
             log::info!("Loaded parameters from {params}");
 
             let mut sim = if let Some(snap_path) = restart {
-                Simulation::read_snapshot(&snap_path, cfg)
+                Simulation::read_snapshot(&snap_path, cfg, mpi_ctx)
                     .unwrap_or_else(|e| {
                         eprintln!("Error reading snapshot {snap_path}: {e}");
                         std::process::exit(1);
                     })
             } else {
-                let mut s = Simulation::new(cfg);
+                let mut s = Simulation::new(cfg, mpi_ctx);
                 if let Some(ic_path) = ic {
                     s.load_ic(&ic_path)
                         .unwrap_or_else(|e| {

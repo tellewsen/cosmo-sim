@@ -49,7 +49,10 @@ pub struct Simulation {
 
 impl Simulation {
     /// Construct and initialise from a `Config`.
-    pub fn new(config: Config) -> Self {
+    ///
+    /// `mpi_ctx` is the MPI context, created once in `main()` and passed in.
+    /// In non-MPI builds, use `MpiContext::init()` which returns a single-rank stub.
+    pub fn new(config: Config, mpi_ctx: MpiContext) -> Self {
         let c = &config.cosmology;
         let cosmology = Cosmology {
             omega_m: c.omega_m,
@@ -86,7 +89,7 @@ impl Simulation {
             cosmology,
             grid,
             particles,
-            mpi_ctx: MpiContext::init(),
+            mpi_ctx,
         }
     }
 
@@ -432,7 +435,7 @@ impl Simulation {
     }
 
     /// Read back a snapshot (for restart).
-    pub fn read_snapshot(path: &str, config: Config) -> std::io::Result<Self> {
+    pub fn read_snapshot(path: &str, config: Config, mpi_ctx: MpiContext) -> std::io::Result<Self> {
         use std::io::Read;
         let mut f = std::fs::File::open(path)?;
         let mut buf = [0u8; 8];
@@ -454,7 +457,7 @@ impl Simulation {
         let a = read_f64!();
         let np = read_u64!() as usize;
 
-        let mut sim = Simulation::new(config);
+        let mut sim = Simulation::new(config, mpi_ctx);
         sim.step = step;
         sim.a = a;
 
