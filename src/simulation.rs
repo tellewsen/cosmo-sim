@@ -215,6 +215,7 @@ impl Simulation {
                 g_cfg.epsilon,
                 g_cfg.n_mg_iter,
                 g_cfg.n_smooth as usize,
+                &self.mpi_ctx,
             );
 
             // In distributed mode, the FFT-PM solver operates on the full

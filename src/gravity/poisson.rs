@@ -286,15 +286,214 @@ pub fn solve_poisson_fft(source: &[Real], dx: Real, n: usize) -> Vec<Real> {
     solve_poisson_mg(source, dx, n, 1e-10, 500, 3)
 }
 
+// ─── Distributed FFT solver ──────────────────────────────────────────────────
+
+/// Distributed FFT Poisson solver via slab-pencil transpose.
+///
+/// Uses the same discrete-Laplacian eigenvalue division as `solve_poisson_fft`,
+/// but distributes the i-axis FFT pass across MPI ranks via `transpose_i_to_j`
+/// / `transpose_j_to_i`.  On a single rank the result is bitwise identical to
+/// the serial solver.
+///
+/// `local_source`: source term for this rank's i-slab, length = `n_local_i * n * n`.
+/// `dx`: cell spacing.  `n`: global grid size.
+/// `mpi`: MPI context (carries rank, size, transpose operations).
+///
+/// Returns the gravitational potential for this rank's i-slab.
+#[cfg(all(feature = "fft_pm", feature = "mpi_parallel"))]
+pub fn solve_poisson_fft_mpi(
+    local_source: &[Real],
+    dx: Real,
+    n: usize,
+    mpi: &crate::mpi::MpiContext,
+) -> Vec<Real> {
+    use rustfft::{FftPlanner, num_complex::Complex};
+    use std::f64::consts::PI;
+
+    let n_local_i = mpi.slab_count(n);
+    let n_local = n_local_i * n * n;
+    assert_eq!(local_source.len(), n_local);
+
+    // Promote to complex
+    let mut data: Vec<Complex<f64>> = local_source.iter()
+        .map(|&s| Complex::new(s, 0.0))
+        .collect();
+    let mut planner = FftPlanner::<f64>::new();
+
+    // ── Forward pass 1: 1D FFTs along k-axis (contiguous, no communication) ──
+    {
+        let fft = planner.plan_fft_forward(n);
+        for i in 0..n_local_i {
+            for j in 0..n {
+                let start = i * n * n + j * n;
+                fft.process(&mut data[start..start + n]);
+            }
+        }
+    }
+
+    // ── Forward pass 2: 1D FFTs along j-axis (gather within slab) ────────────
+    {
+        let fft = planner.plan_fft_forward(n);
+        let mut col = vec![Complex::new(0.0, 0.0); n];
+        for i in 0..n_local_i {
+            for k in 0..n {
+                for j in 0..n {
+                    col[j] = data[i * n * n + j * n + k];
+                }
+                fft.process(&mut col);
+                for j in 0..n {
+                    data[i * n * n + j * n + k] = col[j];
+                }
+            }
+        }
+    }
+
+    // ── Transpose i-slab → j-pencil (communication) ─────────────────────────
+    // Split real and imaginary parts for the transpose (MpiContext works on Real).
+    let re: Vec<Real> = data.iter().map(|c| c.re).collect();
+    let im: Vec<Real> = data.iter().map(|c| c.im).collect();
+    let re_j = mpi.transpose_i_to_j(&re, n);
+    let im_j = mpi.transpose_i_to_j(&im, n);
+
+    let n_local_j = mpi.slab_count(n); // same partitioning for j after transpose
+    let mut data_j: Vec<Complex<f64>> = re_j.iter().zip(im_j.iter())
+        .map(|(&r, &i)| Complex::new(r, i))
+        .collect();
+
+    // ── Forward pass 3: 1D FFTs along i-axis (now contiguous after transpose) ─
+    // After transpose_i_to_j, layout is (n_local_j, n, n) with full i-range in
+    // the middle index.  For each local j-slab and each k, extract the i-column,
+    // transform, and write back.
+    {
+        let fft = planner.plan_fft_forward(n);
+        let mut col = vec![Complex::new(0.0, 0.0); n];
+        for lj in 0..n_local_j {
+            for k in 0..n {
+                // Gather i-column: data_j[lj * n * n + i * n + k] for i in 0..n
+                for i in 0..n {
+                    col[i] = data_j[lj * n * n + i * n + k];
+                }
+                fft.process(&mut col);
+                for i in 0..n {
+                    data_j[lj * n * n + i * n + k] = col[i];
+                }
+            }
+        }
+    }
+
+    // ── Apply Green's function ───────────────────────────────────────────────
+    // After transpose, rank owns j-indices [j_lo..j_hi).
+    // Local index [lj][i][k] → global (i, j_lo + lj, k).
+    let j_lo = mpi.slab_start(n);
+    let inv_dx2 = 1.0 / (dx * dx);
+    for lj in 0..n_local_j {
+        let gj = j_lo + lj;
+        for i in 0..n {
+            for k in 0..n {
+                let idx = lj * n * n + i * n + k;
+                if i == 0 && gj == 0 && k == 0 {
+                    data_j[idx] = Complex::new(0.0, 0.0);
+                    continue;
+                }
+                let si = (PI * i as f64 / n as f64).sin();
+                let sj = (PI * gj as f64 / n as f64).sin();
+                let sk = (PI * k as f64 / n as f64).sin();
+                let lambda = -4.0 * inv_dx2 * (si * si + sj * sj + sk * sk);
+                data_j[idx] /= lambda;
+            }
+        }
+    }
+
+    // ── Inverse pass 1: inverse 1D FFTs along i-axis ─────────────────────────
+    {
+        let ifft = planner.plan_fft_inverse(n);
+        let mut col = vec![Complex::new(0.0, 0.0); n];
+        for lj in 0..n_local_j {
+            for k in 0..n {
+                for i in 0..n {
+                    col[i] = data_j[lj * n * n + i * n + k];
+                }
+                ifft.process(&mut col);
+                for i in 0..n {
+                    data_j[lj * n * n + i * n + k] = col[i];
+                }
+            }
+        }
+    }
+
+    // ── Transpose j-pencil → i-slab (communication) ─────────────────────────
+    let re_j2: Vec<Real> = data_j.iter().map(|c| c.re).collect();
+    let im_j2: Vec<Real> = data_j.iter().map(|c| c.im).collect();
+    let re_i = mpi.transpose_j_to_i(&re_j2, n);
+    let im_i = mpi.transpose_j_to_i(&im_j2, n);
+
+    let mut data: Vec<Complex<f64>> = re_i.iter().zip(im_i.iter())
+        .map(|(&r, &i)| Complex::new(r, i))
+        .collect();
+
+    // ── Inverse pass 2: inverse 1D FFTs along j-axis ─────────────────────────
+    {
+        let ifft = planner.plan_fft_inverse(n);
+        let mut col = vec![Complex::new(0.0, 0.0); n];
+        for i in 0..n_local_i {
+            for k in 0..n {
+                for j in 0..n {
+                    col[j] = data[i * n * n + j * n + k];
+                }
+                ifft.process(&mut col);
+                for j in 0..n {
+                    data[i * n * n + j * n + k] = col[j];
+                }
+            }
+        }
+    }
+
+    // ── Inverse pass 3: inverse 1D FFTs along k-axis (contiguous) ────────────
+    {
+        let ifft = planner.plan_fft_inverse(n);
+        for i in 0..n_local_i {
+            for j in 0..n {
+                let start = i * n * n + j * n;
+                ifft.process(&mut data[start..start + n]);
+            }
+        }
+    }
+
+    // ── Normalise and subtract mean ──────────────────────────────────────────
+    let n3 = (n * n * n) as f64;
+    let mut phi: Vec<Real> = data.iter().map(|c| c.re / n3).collect();
+    let local_sum: f64 = phi.iter().sum();
+    let global_sum = mpi.allreduce_sum(local_sum);
+    let mean = global_sum / n3;
+    phi.iter_mut().for_each(|p| *p -= mean);
+    phi
+}
+
 /// Primary solver: FFT when available (faster and exact), multigrid otherwise.
+///
+/// In distributed MPI builds with `fft_pm`, delegates to `solve_poisson_fft_mpi`.
+/// The `mpi` parameter is only used when both `fft_pm` and `mpi_parallel` features
+/// are active; otherwise it is ignored.
 pub fn solve_poisson(
     source: &[Real], dx: Real, n: usize,
     epsilon: Real, max_iter: u32, n_smooth: usize,
+    mpi: &crate::mpi::MpiContext,
 ) -> Vec<Real> {
-    #[cfg(feature = "fft_pm")]
-    { let _ = (epsilon, max_iter, n_smooth); solve_poisson_fft(source, dx, n) }
+    #[cfg(all(feature = "fft_pm", feature = "mpi_parallel"))]
+    {
+        let _ = (epsilon, max_iter, n_smooth);
+        solve_poisson_fft_mpi(source, dx, n, mpi)
+    }
+    #[cfg(all(feature = "fft_pm", not(feature = "mpi_parallel")))]
+    {
+        let _ = (epsilon, max_iter, n_smooth, mpi);
+        solve_poisson_fft(source, dx, n)
+    }
     #[cfg(not(feature = "fft_pm"))]
-    { solve_poisson_mg(source, dx, n, epsilon, max_iter, n_smooth) }
+    {
+        let _ = mpi;
+        solve_poisson_mg(source, dx, n, epsilon, max_iter, n_smooth)
+    }
 }
 
 // ─── Gradient ─────────────────────────────────────────────────────────────────
@@ -443,6 +642,24 @@ pub mod tests {
         let phi2  = solve_poisson_fft(&s2, dx, n);
         let err = max_err(&phi12, &phi1.iter().zip(phi2.iter()).map(|(a,b)|a+b).collect::<Vec<_>>());
         assert!(err < 1e-10, "FFT not linear: {err:.3e}");
+    }
+
+    // ── Distributed FFT (single-rank, no MPI runtime needed) ───────────────
+
+    #[cfg(all(feature = "fft_pm", feature = "mpi_parallel"))]
+    #[test]
+    fn mpi_fft_single_rank_matches_serial() {
+        // On a single MPI rank the distributed FFT must give the same result
+        // as the serial FFT (bitwise identical modulo FP ordering).
+        let n = 16_usize;
+        let dx = 1.0 / n as Real;
+        let (src, _) = make_mode(n, 1);
+        let mpi = crate::mpi::MpiContext::init();
+        let phi_mpi = solve_poisson_fft_mpi(&src, dx, n, &mpi);
+        let phi_ser = solve_poisson_fft(&src, dx, n);
+        let err = max_err(&sub_mean(&phi_mpi), &sub_mean(&phi_ser));
+        println!("MPI FFT vs serial FFT: {err:.3e}");
+        assert!(err < 1e-9, "MPI FFT vs serial FFT: {err:.3e}");
     }
 
     // ── Gradient ──────────────────────────────────────────────────────────────
