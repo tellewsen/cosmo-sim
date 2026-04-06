@@ -15,6 +15,7 @@
 use crate::{
     amr::grid::AmrGrid,
     gravity::poisson::{grad_phi, solve_poisson},
+    mpi::MpiContext,
     particles::particles::Particles,
     utils::{config::Config, cosmology::Cosmology, types::Real},
 };
@@ -42,6 +43,8 @@ pub struct Simulation {
     pub dtau: Real,
     /// Simulation step counter
     pub step: u64,
+    /// MPI context for distributed runs (single-rank stub when compiled without `mpi_parallel`).
+    pub mpi_ctx: MpiContext,
 }
 
 impl Simulation {
@@ -83,6 +86,7 @@ impl Simulation {
             cosmology,
             grid,
             particles,
+            mpi_ctx: MpiContext::init(),
         }
     }
 
@@ -162,13 +166,32 @@ impl Simulation {
             // ── ½ Drift ────────────────────────────────────────────────────
             self.particles.drift(self.dtau * 0.5, self.a);
 
+            // ── Particle migration (MPI) ──────────────────────────────────
+            // After drift, particles may have crossed slab boundaries.
+            #[cfg(feature = "mpi_parallel")]
+            self.mpi_ctx.migrate_particles(
+                &mut self.particles.pos,
+                &mut self.particles.vel,
+                n,
+                box_size,
+            );
+
             // Scale factor at the half-step midpoint, used for force evaluation
             // and the second drift.  Using a_start here instead of a_half causes
             // ~7× excess power growth when Δa/a is large (e.g. the first step).
             let a_half = self.cosmology.advance_a(self.a, self.dtau * 0.5);
 
             // ── Density assignment ─────────────────────────────────────────
-            let rho = self.particles.cic_density(n);
+            #[allow(unused_mut)]
+            let mut rho = self.particles.cic_density(n);
+
+            // In distributed mode, particles near slab edges deposit into
+            // ghost cells that must be summed across ranks.
+            #[cfg(feature = "mpi_parallel")]
+            {
+                rho = self.mpi_ctx.allreduce_sum_vec(&rho);
+            }
+
             self.grid.set_domain_rho(&rho);
 
             // ── Poisson solver ────────────────────────────────────────────
@@ -190,6 +213,14 @@ impl Simulation {
                 g_cfg.n_mg_iter,
                 g_cfg.n_smooth as usize,
             );
+
+            // In distributed mode, the FFT-PM solver operates on the full
+            // global grid (allreduce density was done above).  The potential
+            // is therefore already globally consistent and no halo exchange
+            // is needed for the gradient stencil (periodic idx3p handles wrapping).
+            // TODO: for a truly distributed multigrid solver, exchange_halos
+            // on phi would be needed here after each V-cycle.
+
             let grav_grid = grad_phi(&phi, dx, n);
             self.grid.set_domain_phi(&phi);
             self.grid.set_domain_grav(&grav_grid);
@@ -212,20 +243,36 @@ impl Simulation {
             // should be evaluated at τ+Δτ/2, not the step start.
             self.particles.drift(self.dtau * 0.5, a_half);
 
+            // ── Particle migration after second drift (MPI) ───────────────
+            #[cfg(feature = "mpi_parallel")]
+            self.mpi_ctx.migrate_particles(
+                &mut self.particles.pos,
+                &mut self.particles.vel,
+                n,
+                box_size,
+            );
+
             // ── Advance a ─────────────────────────────────────────────────
             self.a = self.cosmology.advance_a(self.a, self.dtau);
             self.step += 1;
 
-            log::info!(
-                "Step {:6}  a = {:.5}  Δτ = {:.3e}",
-                self.step,
-                self.a,
-                self.dtau
-            );
+            if self.mpi_ctx.is_root() {
+                log::info!(
+                    "Step {:6}  a = {:.5}  Δτ = {:.3e}",
+                    self.step,
+                    self.a,
+                    self.dtau
+                );
+            }
 
             // ── Output ────────────────────────────────────────────────────
+            // In MPI mode, only rank 0 writes snapshots.  A full gather of
+            // particles would be needed for the power spectrum; for now,
+            // every rank writes independently (to be improved with gather).
             if next_out < out_times.len() && self.a >= out_times[next_out] {
-                self.write_snapshot(next_out);
+                if self.mpi_ctx.is_root() {
+                    self.write_snapshot(next_out);
+                }
                 next_out += 1;
             }
         }
@@ -301,7 +348,7 @@ impl Simulation {
 
     fn compute_dtau(&self) -> Real {
         // CFL: Δτ < courant * dx / v_max  (parallel reduction over particles)
-        let v_max: Real = self
+        let v_max_local: Real = self
             .particles
             .vel
             .par_iter()
@@ -309,6 +356,11 @@ impl Simulation {
             .map(f64::abs)
             .reduce(|| 0.0_f64, f64::max)
             .max(1.0e-10);
+
+        // In MPI mode, take the global maximum across all ranks so every
+        // rank uses the same timestep (required for synchronous leapfrog).
+        let v_max = self.mpi_ctx.allreduce_max(v_max_local);
+
         let n = self.config.run.n_grid as Real;
         let dx = self.config.run.box_size / n;
         let cfl = self.config.run.courant_factor * dx / v_max;
