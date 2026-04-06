@@ -376,6 +376,222 @@ impl MpiContext {
     pub fn allreduce_sum_vec(&self, local: &[Real]) -> Vec<Real> {
         local.to_vec()
     }
+
+    // ── Distributed transpose (for FFT Poisson solver) ──────────────────────
+
+    /// Transpose from i-slab layout to j-pencil layout.
+    ///
+    /// Input: each rank r owns i-slabs `[r*N/size .. (r+1)*N/size)`, full j
+    /// and k extents.  `local_data` has shape `(n_local_i, n, n)` in C-order
+    /// (i slowest, k fastest).
+    ///
+    /// Output: each rank r owns j-slabs `[r*N/size .. (r+1)*N/size)`, full i
+    /// and k extents.  Returned vec has shape `(n_local_j, n, n)`.
+    ///
+    /// This is the communication step needed before the i-axis FFT pass so
+    /// that each rank holds contiguous i-columns.
+    ///
+    /// `n` is the global grid size (cubic grid assumed: same in all three dims).
+    #[cfg(feature = "mpi")]
+    pub fn transpose_i_to_j(&self, local_data: &[Real], n: usize) -> Vec<Real> {
+        use ::mpi::traits::Communicator;
+
+        let universe = unsafe {
+            &*(&self._universe as *const ::mpi::environment::Universe)
+        };
+        let world = universe.world();
+
+        let n_local_i = self.slab_count(n);
+        debug_assert_eq!(local_data.len(), n_local_i * n * n);
+
+        // Pack send buffers: for each target rank s, extract the sub-block
+        // A[i_lo..i_hi][j_s_lo..j_s_hi][0..n] from our local data.
+        let mut send_buf = vec![0.0; n_local_i * n * n];
+        let mut send_counts = vec![0i32; self.size];
+        let mut send_displs = vec![0i32; self.size];
+
+        let mut offset = 0usize;
+        for s in 0..self.size {
+            let j_lo = s * n / self.size;
+            let j_hi = (s + 1) * n / self.size;
+            let nj_s = j_hi - j_lo;
+            let block_size = n_local_i * nj_s * n;
+
+            send_counts[s] = block_size as i32;
+            send_displs[s] = offset as i32;
+
+            // Pack: iterate over local i, then j in [j_lo..j_hi], then all k
+            for li in 0..n_local_i {
+                for j in j_lo..j_hi {
+                    let src_start = li * n * n + j * n;
+                    let dst_start = offset + li * nj_s * n + (j - j_lo) * n;
+                    send_buf[dst_start..dst_start + n]
+                        .copy_from_slice(&local_data[src_start..src_start + n]);
+                }
+            }
+            offset += block_size;
+        }
+
+        // Compute recv counts: from each sender s, we receive
+        // n_local_i_of_s * n_local_j * n elements.
+        let n_local_j = self.slab_count(n); // same partitioning scheme
+        let mut recv_counts = vec![0i32; self.size];
+        let mut recv_displs = vec![0i32; self.size];
+        let mut roffset = 0usize;
+        for s in 0..self.size {
+            let ni_s = (s + 1) * n / self.size - s * n / self.size;
+            let block_size = ni_s * n_local_j * n;
+            recv_counts[s] = block_size as i32;
+            recv_displs[s] = roffset as i32;
+            roffset += block_size;
+        }
+
+        let mut recv_buf = vec![0.0; roffset];
+
+        // All-to-all-v exchange
+        {
+            use ::mpi::datatype::Partition;
+            use ::mpi::collective::AllToAllVariadic;
+
+            let send_partition = Partition::new(&send_buf[..], send_counts.clone(), &send_displs[..]);
+            let mut recv_partition = ::mpi::datatype::PartitionMut::new(
+                &mut recv_buf[..],
+                recv_counts.clone(),
+                &recv_displs[..],
+            );
+            world.all_to_all_varcount(&send_partition, &mut recv_partition);
+        }
+
+        // Unpack recv buffers into j-pencil layout: output[lj][i][k]
+        // where lj is local j index, i is global i, k is global k.
+        let mut output = vec![0.0; n_local_j * n * n];
+
+        for s in 0..self.size {
+            let i_lo_s = s * n / self.size;
+            let ni_s = (s + 1) * n / self.size - i_lo_s;
+            let base = recv_displs[s] as usize;
+
+            // Received block from rank s has shape (ni_s, n_local_j, n) in C-order
+            for si in 0..ni_s {
+                let gi = i_lo_s + si; // global i index
+                for lj in 0..n_local_j {
+                    let src_start = base + si * n_local_j * n + lj * n;
+                    let dst_start = lj * n * n + gi * n;
+                    output[dst_start..dst_start + n]
+                        .copy_from_slice(&recv_buf[src_start..src_start + n]);
+                }
+            }
+        }
+
+        output
+    }
+
+    /// No-op transpose for non-MPI builds (single rank owns entire grid).
+    #[cfg(not(feature = "mpi"))]
+    pub fn transpose_i_to_j(&self, local_data: &[Real], _n: usize) -> Vec<Real> {
+        local_data.to_vec()
+    }
+
+    /// Transpose from j-pencil layout back to i-slab layout.
+    ///
+    /// Inverse of `transpose_i_to_j`.  Input has shape `(n_local_j, n, n)`,
+    /// output has shape `(n_local_i, n, n)`.
+    #[cfg(feature = "mpi")]
+    pub fn transpose_j_to_i(&self, local_data: &[Real], n: usize) -> Vec<Real> {
+        use ::mpi::traits::Communicator;
+
+        let universe = unsafe {
+            &*(&self._universe as *const ::mpi::environment::Universe)
+        };
+        let world = universe.world();
+
+        let n_local_j = self.slab_count(n);
+        debug_assert_eq!(local_data.len(), n_local_j * n * n);
+
+        // Pack send buffers: for each target rank s, extract sub-block
+        // B[lj][i_s_lo..i_s_hi][0..n] from local j-pencil data.
+        let mut send_buf = vec![0.0; n_local_j * n * n];
+        let mut send_counts = vec![0i32; self.size];
+        let mut send_displs = vec![0i32; self.size];
+
+        let mut offset = 0usize;
+        for s in 0..self.size {
+            let i_lo = s * n / self.size;
+            let i_hi = (s + 1) * n / self.size;
+            let ni_s = i_hi - i_lo;
+            let block_size = n_local_j * ni_s * n;
+
+            send_counts[s] = block_size as i32;
+            send_displs[s] = offset as i32;
+
+            // Pack: iterate over local j, then i in [i_lo..i_hi], then all k
+            for lj in 0..n_local_j {
+                for i in i_lo..i_hi {
+                    let src_start = lj * n * n + i * n;
+                    let dst_start = offset + lj * ni_s * n + (i - i_lo) * n;
+                    send_buf[dst_start..dst_start + n]
+                        .copy_from_slice(&local_data[src_start..src_start + n]);
+                }
+            }
+            offset += block_size;
+        }
+
+        // Recv counts: from each sender s, we get n_local_j_of_s * n_local_i * n
+        let n_local_i = self.slab_count(n);
+        let mut recv_counts = vec![0i32; self.size];
+        let mut recv_displs = vec![0i32; self.size];
+        let mut roffset = 0usize;
+        for s in 0..self.size {
+            let nj_s = (s + 1) * n / self.size - s * n / self.size;
+            let block_size = nj_s * n_local_i * n;
+            recv_counts[s] = block_size as i32;
+            recv_displs[s] = roffset as i32;
+            roffset += block_size;
+        }
+
+        let mut recv_buf = vec![0.0; roffset];
+
+        {
+            use ::mpi::datatype::Partition;
+            use ::mpi::collective::AllToAllVariadic;
+
+            let send_partition = Partition::new(&send_buf[..], send_counts.clone(), &send_displs[..]);
+            let mut recv_partition = ::mpi::datatype::PartitionMut::new(
+                &mut recv_buf[..],
+                recv_counts.clone(),
+                &recv_displs[..],
+            );
+            world.all_to_all_varcount(&send_partition, &mut recv_partition);
+        }
+
+        // Unpack: output has shape (n_local_i, n, n) in C-order (i slowest).
+        // From rank s we received a block of shape (nj_s, n_local_i, n).
+        let mut output = vec![0.0; n_local_i * n * n];
+
+        for s in 0..self.size {
+            let j_lo_s = s * n / self.size;
+            let nj_s = (s + 1) * n / self.size - j_lo_s;
+            let base = recv_displs[s] as usize;
+
+            for sj in 0..nj_s {
+                let gj = j_lo_s + sj; // global j index
+                for li in 0..n_local_i {
+                    let src_start = base + sj * n_local_i * n + li * n;
+                    let dst_start = li * n * n + gj * n;
+                    output[dst_start..dst_start + n]
+                        .copy_from_slice(&recv_buf[src_start..src_start + n]);
+                }
+            }
+        }
+
+        output
+    }
+
+    /// No-op inverse transpose for non-MPI builds.
+    #[cfg(not(feature = "mpi"))]
+    pub fn transpose_j_to_i(&self, local_data: &[Real], _n: usize) -> Vec<Real> {
+        local_data.to_vec()
+    }
 }
 
 #[cfg(test)]
@@ -422,5 +638,55 @@ mod tests {
         let data = vec![1.0, 2.0, 3.0];
         let result = ctx.allreduce_sum_vec(&data);
         assert_eq!(result, data);
+    }
+
+    // ── Transpose tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn transpose_i_to_j_single_rank_is_identity() {
+        let ctx = MpiContext::init();
+        let n = 8;
+        let data: Vec<Real> = (0..n * n * n).map(|i| i as Real).collect();
+        let result = ctx.transpose_i_to_j(&data, n);
+        assert_eq!(result.len(), data.len());
+        assert_eq!(result, data);
+    }
+
+    #[test]
+    fn transpose_j_to_i_single_rank_is_identity() {
+        let ctx = MpiContext::init();
+        let n = 8;
+        let data: Vec<Real> = (0..n * n * n).map(|i| i as Real).collect();
+        let result = ctx.transpose_j_to_i(&data, n);
+        assert_eq!(result.len(), data.len());
+        assert_eq!(result, data);
+    }
+
+    #[test]
+    fn transpose_round_trip_single_rank() {
+        let ctx = MpiContext::init();
+        let n = 8;
+        let data: Vec<Real> = (0..n * n * n)
+            .map(|i| (i as Real).sin())
+            .collect();
+        let transposed = ctx.transpose_i_to_j(&data, n);
+        let recovered = ctx.transpose_j_to_i(&transposed, n);
+        assert_eq!(recovered.len(), data.len());
+        for (a, b) in data.iter().zip(recovered.iter()) {
+            assert!(
+                (a - b).abs() < 1e-14,
+                "round-trip mismatch: {a} vs {b}"
+            );
+        }
+    }
+
+    #[test]
+    fn transpose_preserves_length() {
+        let ctx = MpiContext::init();
+        for n in [4, 8, 16] {
+            let data: Vec<Real> = vec![1.0; n * n * n];
+            assert_eq!(ctx.transpose_i_to_j(&data, n).len(), n * n * n);
+            assert_eq!(ctx.transpose_j_to_i(&data, n).len(), n * n * n);
+        }
     }
 }
