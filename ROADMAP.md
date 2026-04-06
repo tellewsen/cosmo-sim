@@ -227,7 +227,49 @@ Comment updated: "grad_phi returns −∇χ; multiply by +β₀/a to get −(β�
 - [x] Fix symmetron sign bug: `fifth_force_grid` must return `−(β₀/a)∇χ` (attractive)
 - [x] Re-run symmetron 64 Mpc/h after sign fix; verify ΔP/P > 0 — PASS
 - [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison
-- [ ] MPI support for cluster-scale runs
+- [x] MPI support for cluster-scale runs — IN PROGRESS (see below)
+
+---
+
+### MPI support (2026-04-06)
+
+**Status: IMPLEMENTED (basic framework), NOT YET TESTED multi-rank**
+
+Added `src/mpi/mod.rs` with the `mpi_parallel` cargo feature (depends on `mpi` crate 0.8).
+
+**Design decisions:**
+
+1. **Slab decomposition along i-axis (x):** Rank r owns i-slabs [r*N/size, (r+1)*N/size).
+   This matches RAMSES and keeps the fastest-varying index (k) contiguous for cache efficiency.
+   C-order layout means each i-slab is a contiguous block of N*N cells.
+
+2. **Hybrid MPI+rayon:** Each rank uses rayon for intra-node parallelism. MPI handles
+   inter-node communication. Set RAYON_NUM_THREADS to control threads per rank.
+
+3. **Current density strategy:** allreduce_sum_vec on the full density grid after CIC.
+   This is correct but O(N^3) communication per step. For 512^3+ grids, a distributed
+   FFT (e.g. pencil decomposition) would be more efficient.
+
+4. **Poisson solver:** The FFT-PM path currently operates on the full global grid
+   (after allreduce). A truly distributed FFT (e.g. 2DECOMP&FFT style pencil transpose)
+   is left as a TODO for memory scalability beyond ~256^3 per rank.
+
+5. **Particle migration:** After each drift, particles crossing slab boundaries are
+   sent to left/right neighbour ranks. Periodic wrapping is handled.
+
+**What works:**
+- Non-MPI path unchanged and all 83 tests pass
+- MpiContext with slab geometry, halo exchange, particle migration, reductions
+- Simulation loop wired with cfg(feature = "mpi_parallel") at all key points
+- Timestep synchronisation via allreduce_max(v_max)
+- Output gated to rank 0
+
+**TODO (MPI):**
+- [ ] Distributed FFT for Poisson solve (pencil decomposition)
+- [ ] Distributed multigrid for scalar field solvers
+- [ ] Multi-rank integration test (requires MPI runtime in CI)
+- [ ] Particle gather to rank 0 for snapshot/power spectrum output
+- [ ] Load balancing for AMR (currently assumes uniform grid)
 
 ---
 

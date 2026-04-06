@@ -13,9 +13,34 @@ cargo build --release                                    # standard gravity
 cargo build --release --features symmetron               # + Symmetron scalar field
 cargo build --release --features fofr                    # + f(R) Hu-Sawicki
 cargo build --release --features symmetron,fofr          # both
+cargo build --release --features mpi_parallel            # + MPI multi-node support
+cargo build --release --features mpi_parallel,fofr       # MPI + f(R)
 ```
 
-Features: `symmetron`, `fofr`, `hdf5_output`, `fft_pm` (default).
+Features: `symmetron`, `fofr`, `hdf5_output`, `fft_pm` (default), `mpi_parallel`.
+
+### MPI build prerequisites
+
+The `mpi_parallel` feature requires an MPI implementation (OpenMPI or MPICH) and its development headers:
+
+```bash
+# Ubuntu/Debian
+sudo apt install libopenmpi-dev
+
+# Fedora/RHEL
+sudo dnf install openmpi-devel
+
+# macOS
+brew install open-mpi
+```
+
+### MPI run
+
+```bash
+mpirun -np 4 ./target/release/cosmo_sim run --params params.toml
+```
+
+Each rank uses `rayon` for intra-node threading (hybrid MPI+threads). Set `RAYON_NUM_THREADS` to control threads per rank.
 
 ## Run
 
@@ -48,14 +73,15 @@ Python tools require Python ≥3.11 with numpy, matplotlib, scipy. Use `uv run p
 
 **Physics loop** (per timestep, in `simulation.rs`):
 1. Drift ½ — move particles (supercomoving DKD leapfrog)
-2. CIC density assignment to grid
-3. Poisson solve → gravitational acceleration
-4. [If scalar field enabled] NGS multigrid solve → fifth force
-5. Kick — apply accelerations to velocities
-6. Drift ½
-7. Advance scale factor (RK4)
-8. AMR refinement
-9. Snapshot output if due
+2. [If MPI] Migrate particles that crossed slab boundaries
+3. CIC density assignment to grid; [If MPI] allreduce density
+4. Poisson solve → gravitational acceleration
+5. [If scalar field enabled] NGS multigrid solve → fifth force
+6. Kick — apply accelerations to velocities
+7. Drift ½; [If MPI] migrate particles again
+8. Advance scale factor (RK4); timestep uses allreduce_max(v_max)
+9. AMR refinement
+10. Snapshot output if due (rank 0 only in MPI mode)
 
 **Key modules:**
 
@@ -71,6 +97,7 @@ Python tools require Python ≥3.11 with numpy, matplotlib, scipy. Use `uv run p
 | `scalar_field/fofr.rs` | f(R) Hu-Sawicki: nonlinear NGS multigrid |
 | `ic/zeldovich.rs` | Zel'dovich approximation IC generator with 2LPT; IC normalization is `√(N³ P/V)` |
 | `analysis/power_spectrum.rs` | P(k) estimator from snapshots |
+| `mpi/mod.rs` | MPI slab decomposition, halo exchange, particle migration, reductions (feature=`mpi_parallel`) |
 
 **Performance design:** SoA particle layout for cache efficiency; `rayon` data-parallel iterators mirror OpenMP in RAMSES; release profile uses `lto="fat"`, `opt-level=3`, single codegen unit.
 
