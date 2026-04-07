@@ -218,10 +218,11 @@ impl Simulation {
                 &self.mpi_ctx,
             );
 
-            // In distributed mode, the FFT-PM solver operates on the full
-            // global grid (allreduce density was done above).  The potential
-            // is therefore already globally consistent and no halo exchange
-            // is needed for the gradient stencil (periodic idx3p handles wrapping).
+            // In distributed mode, the FFT-PM solver receives a local slab,
+            // performs the distributed FFT, then allgathers phi back into a
+            // full N^3 grid.  The potential is therefore globally consistent
+            // and no halo exchange is needed for the gradient stencil
+            // (periodic idx3p handles wrapping).
             // TODO: for a truly distributed multigrid solver, exchange_halos
             // on phi would be needed here after each V-cycle.
 

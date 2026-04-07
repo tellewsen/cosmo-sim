@@ -377,6 +377,53 @@ impl MpiContext {
         local.to_vec()
     }
 
+    // ── Allgather slabs ──────────────────────────────────────────────────────
+
+    /// Gather local i-slab data from all ranks into a full N^3 array.
+    ///
+    /// Each rank contributes its `slab_count(n) * n * n` slice.  The result
+    /// is a full `n * n * n` vector where rank r's data sits at offset
+    /// `slab_start(n) * n * n`.  Uses `MPI_Allgatherv` because slab sizes
+    /// may differ when `n` is not evenly divisible by the number of ranks.
+    #[cfg(feature = "mpi")]
+    pub fn allgather_slabs(&self, local: &[Real], n: usize) -> Vec<Real> {
+        use ::mpi::traits::Communicator;
+
+        let universe = unsafe {
+            &*(&self._universe as *const ::mpi::environment::Universe)
+        };
+        let world = universe.world();
+
+        let n_local = self.slab_count(n) * n * n;
+        debug_assert_eq!(local.len(), n_local);
+
+        // Build counts and displacements for every rank
+        let mut recv_counts = vec![0i32; self.size];
+        let mut recv_displs = vec![0i32; self.size];
+        for r in 0..self.size {
+            let r_start = r * n / self.size;
+            let r_end = (r + 1) * n / self.size;
+            let r_count = (r_end - r_start) * n * n;
+            recv_counts[r] = r_count as i32;
+            recv_displs[r] = (r_start * n * n) as i32;
+        }
+
+        let mut global = vec![0.0_f64; n * n * n];
+        let partition = ::mpi::datatype::Partition::new(
+            &mut global[..],
+            &recv_counts[..],
+            &recv_displs[..],
+        );
+        world.all_gather_varcount_into(local, partition);
+        global
+    }
+
+    /// Non-MPI stub: local data is already the full grid.
+    #[cfg(not(feature = "mpi"))]
+    pub fn allgather_slabs(&self, local: &[Real], _n: usize) -> Vec<Real> {
+        local.to_vec()
+    }
+
     // ── Distributed transpose (for FFT Poisson solver) ──────────────────────
 
     /// Transpose from i-slab layout to j-pencil layout.

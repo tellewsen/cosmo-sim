@@ -482,7 +482,14 @@ pub fn solve_poisson(
     #[cfg(all(feature = "fft_pm", feature = "mpi_parallel"))]
     {
         let _ = (epsilon, max_iter, n_smooth);
-        solve_poisson_fft_mpi(source, dx, n, mpi)
+        // source is the full N^3 grid (after allreduce_sum in simulation.rs).
+        // Extract this rank's i-slab before calling the distributed FFT solver,
+        // then allgather the local phi back into a full grid for grad_phi.
+        let i_lo = mpi.slab_start(n);
+        let i_hi = mpi.slab_end(n);
+        let local_src = &source[i_lo * n * n .. i_hi * n * n];
+        let local_phi = solve_poisson_fft_mpi(local_src, dx, n, mpi);
+        mpi.allgather_slabs(&local_phi, n)
     }
     #[cfg(all(feature = "fft_pm", not(feature = "mpi_parallel")))]
     {
