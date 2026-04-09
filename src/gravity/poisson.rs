@@ -280,6 +280,106 @@ pub fn solve_poisson_fft(source: &[Real], dx: Real, n: usize) -> Vec<Real> {
     phi
 }
 
+/// FFT Poisson solver that writes into pre-allocated buffers.
+///
+/// `phi` receives the result (length n³).
+/// `fft_buf` is the complex work buffer (length n³).
+/// `fft_col` is the column buffer for non-contiguous axis transforms (length n).
+///
+/// Use this variant in the step loop to avoid per-step heap allocations.
+#[cfg(feature = "fft_pm")]
+pub fn solve_poisson_fft_into(
+    source: &[Real],
+    dx: Real,
+    n: usize,
+    phi: &mut [Real],
+    fft_buf: &mut Vec<rustfft::num_complex::Complex<f64>>,
+    fft_col: &mut Vec<rustfft::num_complex::Complex<f64>>,
+) {
+    use rustfft::{FftPlanner, num_complex::Complex};
+    use std::f64::consts::PI;
+
+    let n3 = n * n * n;
+    assert_eq!(source.len(), n3);
+    assert_eq!(phi.len(), n3);
+    assert!(fft_buf.len() >= n3);
+    assert!(fft_col.len() >= n);
+
+    // Promote source to complex in the pre-allocated buffer
+    for (c, &s) in source.iter().enumerate() {
+        fft_buf[c] = Complex::new(s, 0.0);
+    }
+
+    let mut planner = FftPlanner::<f64>::new();
+
+    // 3-D FFT as successive 1-D FFTs along k, j, i axes
+    {
+        let fft = planner.plan_fft_forward(n);
+        for i in 0..n { for j in 0..n {
+            fft.process(&mut fft_buf[i*n*n + j*n .. i*n*n + j*n + n]);
+        }}
+    }
+    {
+        let fft = planner.plan_fft_forward(n);
+        for i in 0..n { for k in 0..n {
+            for j in 0..n { fft_col[j] = fft_buf[i*n*n + j*n + k]; }
+            fft.process(&mut fft_col[..n]);
+            for j in 0..n { fft_buf[i*n*n + j*n + k] = fft_col[j]; }
+        }}
+    }
+    {
+        let fft = planner.plan_fft_forward(n);
+        for j in 0..n { for k in 0..n {
+            for i in 0..n { fft_col[i] = fft_buf[i*n*n + j*n + k]; }
+            fft.process(&mut fft_col[..n]);
+            for i in 0..n { fft_buf[i*n*n + j*n + k] = fft_col[i]; }
+        }}
+    }
+
+    // Divide by discrete Laplacian eigenvalue
+    let inv_dx2 = 1.0 / (dx * dx);
+    for i in 0..n { for j in 0..n { for k in 0..n {
+        let c = i*n*n + j*n + k;
+        if i == 0 && j == 0 && k == 0 { fft_buf[c] = Complex::new(0.0, 0.0); continue; }
+        let si = (PI * i as f64 / n as f64).sin();
+        let sj = (PI * j as f64 / n as f64).sin();
+        let sk = (PI * k as f64 / n as f64).sin();
+        let lambda = -4.0 * inv_dx2 * (si*si + sj*sj + sk*sk);
+        fft_buf[c] /= lambda;
+    }}}
+
+    // Inverse FFT along each axis
+    {
+        let ifft = planner.plan_fft_inverse(n);
+        for i in 0..n { for j in 0..n {
+            ifft.process(&mut fft_buf[i*n*n + j*n .. i*n*n + j*n + n]);
+        }}
+    }
+    {
+        let ifft = planner.plan_fft_inverse(n);
+        for i in 0..n { for k in 0..n {
+            for j in 0..n { fft_col[j] = fft_buf[i*n*n + j*n + k]; }
+            ifft.process(&mut fft_col[..n]);
+            for j in 0..n { fft_buf[i*n*n + j*n + k] = fft_col[j]; }
+        }}
+    }
+    {
+        let ifft = planner.plan_fft_inverse(n);
+        for j in 0..n { for k in 0..n {
+            for i in 0..n { fft_col[i] = fft_buf[i*n*n + j*n + k]; }
+            ifft.process(&mut fft_col[..n]);
+            for i in 0..n { fft_buf[i*n*n + j*n + k] = fft_col[i]; }
+        }}
+    }
+
+    let norm = n3 as f64;
+    for c in 0..n3 {
+        phi[c] = fft_buf[c].re / norm;
+    }
+    let mean = phi.iter().sum::<f64>() / norm;
+    phi.iter_mut().for_each(|p| *p -= mean);
+}
+
 /// Stub when `fft_pm` is disabled: fall back to multigrid.
 #[cfg(not(feature = "fft_pm"))]
 pub fn solve_poisson_fft(source: &[Real], dx: Real, n: usize) -> Vec<Real> {
@@ -503,7 +603,63 @@ pub fn solve_poisson(
     }
 }
 
+/// Primary solver variant that writes into pre-allocated scratch buffers.
+///
+/// For the FFT-PM path (non-MPI), uses `solve_poisson_fft_into` to avoid
+/// per-step heap allocations.  For MPI and multigrid paths, falls back to
+/// allocating internally and copying into `phi`.
+#[allow(unused_variables)]
+pub fn solve_poisson_into(
+    source: &[Real], dx: Real, n: usize,
+    epsilon: Real, max_iter: u32, n_smooth: usize,
+    mpi: &crate::mpi::MpiContext,
+    phi: &mut [Real],
+    #[cfg(feature = "fft_pm")]
+    fft_buf: &mut Vec<rustfft::num_complex::Complex<f64>>,
+    #[cfg(feature = "fft_pm")]
+    fft_col: &mut Vec<rustfft::num_complex::Complex<f64>>,
+) {
+    #[cfg(all(feature = "fft_pm", not(feature = "mpi_parallel")))]
+    {
+        let _ = (epsilon, max_iter, n_smooth, mpi);
+        solve_poisson_fft_into(source, dx, n, phi, fft_buf, fft_col);
+    }
+    // MPI and multigrid paths: allocate internally, copy result into phi
+    #[cfg(all(feature = "fft_pm", feature = "mpi_parallel"))]
+    {
+        let _ = (epsilon, max_iter, n_smooth, fft_buf, fft_col);
+        let i_lo = mpi.slab_start(n);
+        let i_hi = mpi.slab_end(n);
+        let local_src = &source[i_lo * n * n .. i_hi * n * n];
+        let local_phi = solve_poisson_fft_mpi(local_src, dx, n, mpi);
+        let result = mpi.allgather_slabs(&local_phi, n);
+        phi.copy_from_slice(&result);
+    }
+    #[cfg(not(feature = "fft_pm"))]
+    {
+        let _ = mpi;
+        let result = solve_poisson_mg(source, dx, n, epsilon, max_iter, n_smooth);
+        phi.copy_from_slice(&result);
+    }
+}
+
 // ─── Gradient ─────────────────────────────────────────────────────────────────
+
+/// Compute  g = −∇Φ  into a pre-allocated buffer.
+///
+/// `g` must have length `n³`.  Use this variant in the step loop to
+/// avoid per-step heap allocations.
+pub fn grad_phi_into(g: &mut [[Real; 3]], phi: &[Real], dx: Real, n: usize) {
+    let inv_2dx = 0.5 / dx;
+    assert_eq!(g.len(), n * n * n);
+    g.par_iter_mut().enumerate().for_each(|(c, gc)| {
+        let (i, j, k) = from_flat(c, n);
+        let (i, j, k) = (i as isize, j as isize, k as isize);
+        gc[0] = -(phi[idx3p(i+1,j,  k,  n)] - phi[idx3p(i-1,j,  k,  n)]) * inv_2dx;
+        gc[1] = -(phi[idx3p(i,  j+1,k,  n)] - phi[idx3p(i,  j-1,k,  n)]) * inv_2dx;
+        gc[2] = -(phi[idx3p(i,  j,  k+1,n)] - phi[idx3p(i,  j,  k-1,n)]) * inv_2dx;
+    });
+}
 
 /// Compute  g = −∇Φ  via 2nd-order centred differences.
 ///

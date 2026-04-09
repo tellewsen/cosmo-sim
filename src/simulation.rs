@@ -14,12 +14,51 @@
 
 use crate::{
     amr::grid::AmrGrid,
-    gravity::poisson::{grad_phi, solve_poisson},
+    gravity::poisson::{grad_phi_into, solve_poisson_into},
     mpi::MpiContext,
     particles::particles::Particles,
     utils::{config::Config, cosmology::Cosmology, types::Real},
 };
 use rayon::prelude::*;
+
+/// Pre-allocated scratch buffers reused across simulation steps.
+///
+/// At 256^3 the step loop allocates ~1 GB per step (rho, source, phi,
+/// grav_grid, FFT complex buffer).  Allocating once here and reusing
+/// eliminates heap churn that dominated wallclock time.
+pub struct SimScratch {
+    /// Density field (length n^3)
+    pub rho:     Vec<Real>,
+    /// Poisson source term (length n^3)
+    pub source:  Vec<Real>,
+    /// Gravitational potential (length n^3)
+    pub phi:     Vec<Real>,
+    /// Gravitational acceleration grid (length n^3)
+    pub grav:    Vec<[Real; 3]>,
+    /// FFT complex work buffer (length n^3, fft_pm only)
+    #[cfg(feature = "fft_pm")]
+    pub fft_buf: Vec<rustfft::num_complex::Complex<f64>>,
+    /// FFT column buffer for non-contiguous axis transforms (length n, fft_pm only)
+    #[cfg(feature = "fft_pm")]
+    pub fft_col: Vec<rustfft::num_complex::Complex<f64>>,
+}
+
+impl SimScratch {
+    /// Allocate all scratch buffers for an n^3 grid.
+    pub fn new(n: usize) -> Self {
+        let n3 = n * n * n;
+        Self {
+            rho:    vec![0.0_f64; n3],
+            source: vec![0.0_f64; n3],
+            phi:    vec![0.0_f64; n3],
+            grav:   vec![[0.0_f64; 3]; n3],
+            #[cfg(feature = "fft_pm")]
+            fft_buf: vec![rustfft::num_complex::Complex::new(0.0, 0.0); n3],
+            #[cfg(feature = "fft_pm")]
+            fft_col: vec![rustfft::num_complex::Complex::new(0.0, 0.0); n],
+        }
+    }
+}
 
 #[cfg(feature = "symmetron")]
 use crate::scalar_field::symmetron::{fifth_force_grid, solve_symmetron, SymmetronParams};
@@ -45,6 +84,8 @@ pub struct Simulation {
     pub step: u64,
     /// MPI context for distributed runs (single-rank stub when compiled without `mpi_parallel`).
     pub mpi_ctx: MpiContext,
+    /// Pre-allocated scratch buffers reused across steps to avoid heap churn.
+    pub scratch: SimScratch,
 }
 
 impl Simulation {
@@ -79,6 +120,7 @@ impl Simulation {
         let particles = Particles::new(n3_part, m_part, box_size);
 
         let n3_grid = n * n * n;
+        let scratch = SimScratch::new(n);
         Self {
             a: config.run.a_init,
             dtau: config.run.dtau_max * 0.01,
@@ -90,6 +132,7 @@ impl Simulation {
             grid,
             particles,
             mpi_ctx,
+            scratch,
         }
     }
 
@@ -184,20 +227,20 @@ impl Simulation {
             // ~7× excess power growth when Δa/a is large (e.g. the first step).
             let a_half = self.cosmology.advance_a(self.a, self.dtau * 0.5);
 
-            // ── Density assignment ─────────────────────────────────────────
-            #[allow(unused_mut)]
-            let mut rho = self.particles.cic_density(n);
+            // ── Density assignment (into scratch.rho) ──────────────────────
+            self.particles.cic_density_into(&mut self.scratch.rho, n);
 
             // In distributed mode, particles near slab edges deposit into
             // ghost cells that must be summed across ranks.
             #[cfg(feature = "mpi_parallel")]
             {
-                rho = self.mpi_ctx.allreduce_sum_vec(&rho);
+                let reduced = self.mpi_ctx.allreduce_sum_vec(&self.scratch.rho);
+                self.scratch.rho.copy_from_slice(&reduced);
             }
 
-            self.grid.set_domain_rho(&rho);
+            self.grid.set_domain_rho(&self.scratch.rho);
 
-            // ── Poisson solver ────────────────────────────────────────────
+            // ── Poisson solver (into scratch.phi via scratch.fft_buf/col) ─
             let g_cfg = &self.config.gravity;
             // Source:  (3/2) H₀² Ω_m / a_half × δ  (evaluated at half-step)
             // advance_a uses cosmic time τ = t with da/dτ = a·H_phys(a), where
@@ -207,15 +250,22 @@ impl Simulation {
             // causes ~3.7× excess in δ by z=2.
             let h0: Real = self.cosmology.h * 100.0; // H₀ physical [km/s/Mpc]
             let prefac: Real = 1.5 * h0 * h0 * self.cosmology.omega_m / a_half;
-            let source: Vec<Real> = rho.iter().map(|r| prefac * (r - 1.0)).collect();
-            let phi = solve_poisson(
-                &source,
+            for (s, r) in self.scratch.source.iter_mut().zip(self.scratch.rho.iter()) {
+                *s = prefac * (r - 1.0);
+            }
+            solve_poisson_into(
+                &self.scratch.source,
                 dx,
                 n,
                 g_cfg.epsilon,
                 g_cfg.n_mg_iter,
                 g_cfg.n_smooth as usize,
                 &self.mpi_ctx,
+                &mut self.scratch.phi,
+                #[cfg(feature = "fft_pm")]
+                &mut self.scratch.fft_buf,
+                #[cfg(feature = "fft_pm")]
+                &mut self.scratch.fft_col,
             );
 
             // In distributed mode, the FFT-PM solver receives a local slab,
@@ -226,15 +276,15 @@ impl Simulation {
             // TODO: for a truly distributed multigrid solver, exchange_halos
             // on phi would be needed here after each V-cycle.
 
-            let grav_grid = grad_phi(&phi, dx, n);
-            self.grid.set_domain_phi(&phi);
-            self.grid.set_domain_grav(&grav_grid);
+            grad_phi_into(&mut self.scratch.grav, &self.scratch.phi, dx, n);
+            self.grid.set_domain_phi(&self.scratch.phi);
+            self.grid.set_domain_grav(&self.scratch.grav);
 
             // ── Scalar field ───────────────────────────────────────────────
-            let fifth_grid: Option<Vec<[Real; 3]>> = self.solve_scalar_field(&rho, dx, n);
+            let fifth_grid: Option<Vec<[Real; 3]>> = self.solve_scalar_field(dx, n);
 
             // ── Interpolate forces to particles ────────────────────────────
-            let grav_part = self.particles.cic_interpolate_force(&grav_grid, n);
+            let grav_part = self.particles.cic_interpolate_force(&self.scratch.grav, n);
             let fifth_part: Option<Vec<[Real; 3]>> = fifth_grid
                 .as_ref()
                 .map(|fg| self.particles.cic_interpolate_force(fg, n));
@@ -288,7 +338,7 @@ impl Simulation {
     // ── Scalar field dispatch ─────────────────────────────────────────────────
 
     #[allow(unused_variables)]
-    fn solve_scalar_field(&mut self, rho: &[Real], dx: Real, n: usize) -> Option<Vec<[Real; 3]>> {
+    fn solve_scalar_field(&mut self, dx: Real, n: usize) -> Option<Vec<[Real; 3]>> {
         let sf = &self.config.scalar_field;
 
         #[cfg(feature = "symmetron")]
@@ -302,7 +352,7 @@ impl Simulation {
                 max_iter: 150,
                 n_smooth: 2,
             };
-            let chi_new = solve_symmetron(rho, self.a, dx, n, &p);
+            let chi_new = solve_symmetron(&self.scratch.rho, self.a, dx, n, &p);
             self.chi.copy_from_slice(&chi_new);
             let f5_raw = fifth_force_grid(&self.chi, dx, n, self.a, &p);
             self.grid.set_domain_scalar(&self.chi);
@@ -331,7 +381,7 @@ impl Simulation {
                 max_iter: 150,
                 n_smooth: 2,
             };
-            let chi_new = solve_fofr(rho, self.a, dx, n, &p, &self.cosmology);
+            let chi_new = solve_fofr(&self.scratch.rho, self.a, dx, n, &p, &self.cosmology);
             self.chi.copy_from_slice(&chi_new);
             let f5_raw = fofr_fifth_force(&self.chi, dx, n);
             self.grid.set_domain_scalar(&self.chi);

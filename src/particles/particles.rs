@@ -114,11 +114,26 @@ impl Particles {
     /// Inner loop is sequential to avoid atomic contention.  For large N,
     /// chunk the particles and accumulate into thread-local grids, then sum.
     pub fn cic_density(&self, ng: usize) -> Vec<Real> {
+        let mut rho = vec![0.0_f64; ng * ng * ng];
+        self.cic_density_into(&mut rho, ng);
+        rho
+    }
+
+    /// CIC density assignment into a pre-allocated buffer.
+    ///
+    /// `rho` must have length `ng³`.  It is zeroed and then filled with the
+    /// normalised overdensity field (mean = 1).  Use this variant in the step
+    /// loop to avoid per-step heap allocations.
+    pub fn cic_density_into(&self, rho: &mut [Real], ng: usize) {
         let dx_inv = ng as Real / self.box_size;
         let n3     = ng * ng * ng;
+        assert_eq!(rho.len(), n3);
+
+        // Zero the output buffer
+        rho.iter_mut().for_each(|r| *r = 0.0);
 
         // Thread-local accumulation using rayon fold + reduce
-        let mut rho: Vec<Real> = self.pos.par_iter()
+        let local_sum: Vec<Real> = self.pos.par_iter()
             .fold(
                 || vec![0.0_f64; n3],
                 |mut local, xi| {
@@ -152,10 +167,12 @@ impl Particles {
                 |mut a, b| { a.iter_mut().zip(b.iter()).for_each(|(x, y)| *x += y); a },
             );
 
+        // Copy thread-local result into the output buffer
+        rho.copy_from_slice(&local_sum);
+
         // Normalise: divide by mean so that <ρ/ρ̄> = 1
         let scale = n3 as Real / self.n as Real;
         rho.iter_mut().for_each(|r| *r *= scale);
-        rho
     }
 
     /// Interpolate a grid-defined vector field **back to particle positions**
