@@ -1,0 +1,47 @@
+# ΛCDM animation run — 128³, 64 Mpc/h box, 50 output frames
+# Same physics as lcdm_128.toml but with dense output for animation
+# Frames span a=0.1 (z=9) to a=1.0 (z=0) to capture structure formation
+
+[run]
+box_size       = 64.0
+n_grid         = 128
+levelmax       = 0
+refine_thr     = 8
+a_init         = 0.02
+a_final        = 1.0
+dtau_max       = 5e-5
+courant_factor = 0.8
+
+[cosmology]               # WMAP7 / ISIS paper cosmology
+omega_m      = 0.267
+omega_lambda = 0.733
+omega_b      = 0.0449
+h            = 0.719
+n_s          = 0.963
+sigma8       = 0.801
+
+[gravity]
+epsilon   = 1e-4
+n_mg_iter = 50
+n_smooth  = 2
+
+[particles]
+n_part = 128       # 128³ = 2 097 152 particles
+m_part = 0.0
+
+[output]
+outdir   = "output_lcdm_anim"
+n_output = 50
+a_out    = [
+    0.100000, 0.118367, 0.136735, 0.155102, 0.173469,
+    0.191837, 0.210204, 0.228571, 0.246939, 0.265306,
+    0.283673, 0.302041, 0.320408, 0.338776, 0.357143,
+    0.375510, 0.393878, 0.412245, 0.430612, 0.448980,
+    0.467347, 0.485714, 0.504082, 0.522449, 0.540816,
+    0.559184, 0.577551, 0.595918, 0.614286, 0.632653,
+    0.651020, 0.669388, 0.687755, 0.706122, 0.724490,
+    0.742857, 0.761224, 0.779592, 0.797959, 0.816327,
+    0.834694, 0.853061, 0.871429, 0.889796, 0.908163,
+    0.926531, 0.944898, 0.963265, 0.981633, 1.000000,
+]
+hdf5     = false

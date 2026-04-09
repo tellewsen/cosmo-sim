@@ -3,6 +3,8 @@ output_*/
 figs*/
 *.pdf
 *.png
+*.mp4
+*.gif
 __pycache__/
 .venv/
 docs/superpowers/
