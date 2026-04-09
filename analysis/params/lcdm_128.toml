@@ -1,0 +1,36 @@
+# ΛCDM reference run — 128³, 64 Mpc/h box
+# dx = 0.5 Mpc/h — resolves symmetron Compton wavelength λ₀=1 Mpc/h
+# Memory: ~400 MB total (safe on 15 GB machines, unlike 256³)
+
+[run]
+box_size       = 64.0
+n_grid         = 128
+levelmax       = 0
+refine_thr     = 8
+a_init         = 0.02
+a_final        = 1.0
+dtau_max       = 5e-5
+courant_factor = 0.8
+
+[cosmology]               # WMAP7 / ISIS paper cosmology
+omega_m      = 0.267
+omega_lambda = 0.733
+omega_b      = 0.0449
+h            = 0.719
+n_s          = 0.963
+sigma8       = 0.801
+
+[gravity]
+epsilon   = 1e-4
+n_mg_iter = 50
+n_smooth  = 2
+
+[particles]
+n_part = 128       # 128³ = 2 097 152 particles
+m_part = 0.0
+
+[output]
+outdir   = "output_lcdm_128"
+n_output = 5
+a_out    = [0.33, 0.5, 0.67, 0.82, 1.0]
+hdf5     = false

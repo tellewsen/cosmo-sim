@@ -226,14 +226,29 @@ Comment updated: "grad_phi returns −∇χ; multiply by +β₀/a to get −(β�
 - [x] Fix symmetron unit factor: `(H₀_h λ₀)²` instead of c² (commit 2ee9898) — force now active
 - [x] Fix symmetron sign bug: `fifth_force_grid` must return `−(β₀/a)∇χ` (attractive)
 - [x] Re-run symmetron 64 Mpc/h after sign fix; verify ΔP/P > 0 — PASS
-- [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison
-- [x] MPI support for cluster-scale runs — IN PROGRESS (see below)
+- [x] MPI support for cluster-scale runs — IMPLEMENTED (see below)
+- [x] 128³ validation (64 Mpc/h, dx=0.5 Mpc/h=λ₀/2) — PASS, clear symmetron signal confirmed
+- [ ] 256³ run (128 Mpc/h, ISIS paper resolution) — pending desktop machine
+- [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison (needs HPC)
+
+#### Symmetron 128³ results (64 Mpc/h, dx=0.5 Mpc/h, seed=42)
+
+| a | z | ΔP/P (k=1 h/Mpc) | ΔP/P (k=6 h/Mpc) |
+|---|---|---|---|
+| 0.330 | 2.03 | 0.000 | 0.000 |
+| 0.502 | 0.99 | 0.000 | 0.000 |
+| 0.672 | 0.49 | +0.9% | +5.9% |
+| 0.823 | 0.22 | +1.1% | +9.8% |
+| 1.000 | 0.00 | +1.1% | +7.9% |
+
+Signal activates between z=1 and z=0.5 (a_SSB=0.5 ✓), grows monotonically with k.
+Reaches ~8% enhancement at k≈6 h/Mpc at z=0. Positive and attractive ✓.
 
 ---
 
 ### MPI support (2026-04-06)
 
-**Status: IMPLEMENTED (basic framework), NOT YET TESTED multi-rank**
+**Status: IMPLEMENTED — basic framework + distributed FFT Poisson solver**
 
 Added `src/mpi/mod.rs` with the `mpi_parallel` cargo feature (depends on `mpi` crate 0.8).
 
@@ -247,12 +262,13 @@ Added `src/mpi/mod.rs` with the `mpi_parallel` cargo feature (depends on `mpi` c
    inter-node communication. Set RAYON_NUM_THREADS to control threads per rank.
 
 3. **Current density strategy:** allreduce_sum_vec on the full density grid after CIC.
-   This is correct but O(N^3) communication per step. For 512^3+ grids, a distributed
-   FFT (e.g. pencil decomposition) would be more efficient.
+   Correct but O(N³) communication per step — the remaining bottleneck for very large runs.
 
-4. **Poisson solver:** The FFT-PM path currently operates on the full global grid
-   (after allreduce). A truly distributed FFT (e.g. 2DECOMP&FFT style pencil transpose)
-   is left as a TODO for memory scalability beyond ~256^3 per rank.
+4. **Poisson solver:** Distributed FFT-PM via i-slab ↔ j-pencil transposes (commits
+   316e565, 8d835e7, a9c390d). Each rank computes local k and j FFTs, then a global
+   all-to-all transpose enables the i-axis FFT to run locally. solve_poisson extracts
+   the rank's local slab, calls solve_poisson_fft_mpi, then allgather_slabs reassembles
+   full phi for grad_phi. On a single rank this is bitwise identical to the serial solver.
 
 5. **Particle migration:** After each drift, particles crossing slab boundaries are
    sent to left/right neighbour ranks. Periodic wrapping is handled.
@@ -265,11 +281,18 @@ Added `src/mpi/mod.rs` with the `mpi_parallel` cargo feature (depends on `mpi` c
 - Output gated to rank 0
 
 **TODO (MPI):**
-- [ ] Distributed FFT for Poisson solve (pencil decomposition)
-- [ ] Distributed multigrid for scalar field solvers
+- [x] Distributed FFT for Poisson solve (pencil decomposition) — done
+- [ ] Replace density allreduce with per-rank CIC + ghost exchange (last O(N³) comm)
+- [ ] Distributed multigrid for scalar field solvers (symmetron/fofr on local slabs)
 - [ ] Multi-rank integration test (requires MPI runtime in CI)
 - [ ] Particle gather to rank 0 for snapshot/power spectrum output
 - [ ] Load balancing for AMR (currently assumes uniform grid)
+
+**TODO (performance):**
+- [ ] Pre-allocate simulation scratch buffers (density, source, phi, grav_grid, FFT arrays)
+  and reuse across steps instead of allocating fresh Vecs each step. At 256³ the sim
+  allocates/frees ~1 GB per step — this thrashes the allocator and was the cause of
+  the 36-hour Windows runtime. Fix: pass mutable scratch into the step loop.
 
 ---
 
