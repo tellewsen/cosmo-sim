@@ -158,6 +158,45 @@ fn ngs_sweep_slab(
     }
 }
 
+/// Pointwise residual  r = ∇²χ − f(χ)  on owned cells of a ghost-padded slab.
+///
+/// Returns `(residuals, max_abs_residual)`.
+/// `residuals` is a plain slab (n_local_i × N × N, no ghosts).
+/// Ghosts of `chi` must be current before calling.
+fn residual_slab(
+    chi:       &[Real],
+    rho:       &[Real],
+    a:         Real,
+    dx:        Real,
+    n:         usize,
+    n_local_i: usize,
+    p:         &SymmetronParams,
+) -> (Vec<Real>, Real) {
+    let inv_dx2 = 1.0 / (dx * dx);
+    let mut res: Vec<Real> = vec![0.0; n_local_i * n * n];
+    let mut res_max: Real  = 0.0;
+
+    for li in 1..=n_local_i {
+        for j in 0..n as isize {
+            for k in 0..n as isize {
+                let c_pad   = sidx(li, j, k, n);
+                let c_plain = (li - 1) * n * n + j as usize * n + k as usize;
+                let lap = (chi[sidx(li + 1, j,     k,     n)]
+                         + chi[sidx(li - 1, j,     k,     n)]
+                         + chi[sidx(li,     j + 1, k,     n)]
+                         + chi[sidx(li,     j - 1, k,     n)]
+                         + chi[sidx(li,     j,     k + 1, n)]
+                         + chi[sidx(li,     j,     k - 1, n)]
+                         - 6.0 * chi[c_pad]) * inv_dx2;
+                let r         = lap - source_chi(chi[c_pad], rho[c_plain], a, p);
+                res[c_plain]  = r;
+                res_max       = res_max.max(r.abs());
+            }
+        }
+    }
+    (res, res_max)
+}
+
 /// Equilibrium value of χ at a given overdensity ρ/ρ̄.
 ///
 /// χ_eq = sqrt(max(0, 1 − ρ/M²))  in the broken phase, 0 in the restored phase.
@@ -644,6 +683,44 @@ pub mod tests {
             for jk in 0..n*n {
                 let got = chi_slab[li * n * n + jk];
                 let exp = chi_serial[(li - 1) * n * n + jk];
+                assert!(
+                    (got - exp).abs() < 1e-12,
+                    "li={li} jk={jk}: slab={got:.10} serial={exp:.10}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn residual_slab_matches_serial() {
+        let n = 8_usize;
+        let dx = 1.0_f64;
+        let a  = 0.8_f64;
+        let p  = SymmetronParams::default();
+        let rho: Vec<Real> = (0..n*n*n).map(|i| 0.5 + 0.2 * (i as Real / 10.0).sin()).collect();
+        let chi: Vec<Real> = rho.iter().map(|&r| chi_equilibrium(r, a, &p) + 0.05).collect();
+
+        // Serial residual on full grid
+        let res_serial = residual_chi(&chi, &rho, a, dx, n, &p);
+
+        // Build ghost-padded chi slab (n_local_i = n, periodic ghosts)
+        let n_local_i = n;
+        let mut chi_slab = vec![0.0_f64; (n + 2) * n * n];
+        for li in 1..=n {
+            for jk in 0..n*n {
+                chi_slab[li * n * n + jk] = chi[(li - 1) * n * n + jk];
+            }
+        }
+        for jk in 0..n*n { chi_slab[jk] = chi[(n - 1) * n * n + jk]; }
+        for jk in 0..n*n { chi_slab[(n + 1) * n * n + jk] = chi[jk]; }
+
+        let (res_slab, res_max) = residual_slab(&chi_slab, &rho, a, dx, n, n_local_i, &p);
+
+        assert!(res_max > 0.0, "residual should be non-zero");
+        for li in 1..=n {
+            for jk in 0..n*n {
+                let got = res_slab[(li - 1) * n * n + jk];
+                let exp = res_serial[(li - 1) * n * n + jk];
                 assert!(
                     (got - exp).abs() < 1e-12,
                     "li={li} jk={jk}: slab={got:.10} serial={exp:.10}"
