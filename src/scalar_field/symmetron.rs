@@ -96,6 +96,68 @@ pub fn dsource_dchi(
     (rho_m2 - 1.0 + 3.0 * chi * chi) / (p.lambda_0 * p.lambda_0)
 }
 
+// ── Distributed slab helpers ──────────────────────────────────────────────────
+
+/// Flat index in a ghost-padded slab of shape `(n_local_i + 2) × N × N`.
+///
+/// `li` must be in [0, n_local_i + 2); `j` and `k` wrap periodically mod `n`.
+#[inline]
+fn sidx(li: usize, j: isize, k: isize, n: usize) -> usize {
+    let j = j.rem_euclid(n as isize) as usize;
+    let k = k.rem_euclid(n as isize) as usize;
+    li * n * n + j * n + k
+}
+
+/// One red-black Newton-Gauss-Seidel sweep on a ghost-padded local i-slab.
+///
+/// `chi`      — ghost-padded slab, shape `(n_local_i + 2) × N × N`. Ghosts must
+///              be current (call `exchange_halos` first in MPI mode).
+/// `rho`      — plain slab, shape `n_local_i × N × N` (no ghosts needed).
+/// `i_start`  — global i-index of the first owned cell (li = 1).
+///              Used to keep the red-black colouring consistent across ranks.
+fn ngs_sweep_slab(
+    chi:       &mut Vec<Real>,
+    rho:       &[Real],
+    a:         Real,
+    dx:        Real,
+    n:         usize,
+    n_local_i: usize,
+    i_start:   usize,
+    p:         &SymmetronParams,
+) {
+    let inv_dx2 = 1.0 / (dx * dx);
+    let snap    = chi.clone();
+
+    for color in 0..2_usize {
+        for li in 1..=n_local_i {
+            let i_global = i_start + li - 1;
+            for j in 0..n as isize {
+                let k_start = ((i_global + j as usize) % 2 + color) % 2;
+                let mut k   = k_start as isize;
+                while k < n as isize {
+                    let c     = sidx(li, j, k, n);
+                    // rho index: plain slab (li-1 is 0-based owned index)
+                    let rho_c = rho[(li - 1) * n * n + j as usize * n + k as usize];
+                    let chi_c = snap[c];
+                    let nb    = snap[sidx(li + 1, j,     k,     n)]
+                              + snap[sidx(li - 1, j,     k,     n)]
+                              + snap[sidx(li,     j + 1, k,     n)]
+                              + snap[sidx(li,     j - 1, k,     n)]
+                              + snap[sidx(li,     j,     k + 1, n)]
+                              + snap[sidx(li,     j,     k - 1, n)];
+                    let f     = source_chi(chi_c, rho_c, a, p);
+                    let df    = dsource_dchi(chi_c, rho_c, a, p);
+                    let denom = 6.0 * inv_dx2 + df;
+                    if denom.abs() > 1e-30 {
+                        chi[c] = ((chi_c * df + nb * inv_dx2 - f) / denom).clamp(-1.0, 1.0);
+                    }
+                    k += 2;
+                }
+            }
+        }
+    }
+}
+
 /// Equilibrium value of χ at a given overdensity ρ/ρ̄.
 ///
 /// χ_eq = sqrt(max(0, 1 − ρ/M²))  in the broken phase, 0 in the restored phase.
@@ -537,6 +599,55 @@ pub mod tests {
                     let f = source_chi(chi, rho, a, &p);
                     assert!(f.is_finite(), "f not finite: a={a}, rho={rho}, chi={chi}");
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn ngs_sweep_slab_single_rank_matches_serial() {
+        // Single-rank slab (n_local_i = n, i_start = 0) must produce the same
+        // result as the serial ngs_sweep starting from the same ghost-padded chi.
+        let n = 8_usize;
+        let dx = 1.0_f64;
+        let a = 0.8_f64;
+        let p = SymmetronParams { n_smooth: 2, ..SymmetronParams::default() };
+        let rho: Vec<Real> = (0..n*n*n).map(|i| 0.3 + 0.1 * (i as Real).sin()).collect();
+        let chi_init: Vec<Real> = rho.iter().map(|&r| chi_equilibrium(r, a, &p)).collect();
+
+        // Serial: one ngs_sweep on full n³ chi
+        let mut chi_serial = chi_init.clone();
+        ngs_sweep(&mut chi_serial, &rho, a, dx, n, &p);
+
+        // Slab: build ghost-padded chi (n_local_i = n, i_start = 0)
+        // Ghost rows wrap periodically: left ghost = row n-1, right ghost = row 0.
+        let n_local_i = n;
+        let mut chi_slab = vec![0.0_f64; (n_local_i + 2) * n * n];
+        // owned cells li = 1..=n
+        for li in 1..=n {
+            for jk in 0..n*n {
+                chi_slab[li * n * n + jk] = chi_init[(li - 1) * n * n + jk];
+            }
+        }
+        // left ghost (li=0): periodic = row n-1 of chi
+        for jk in 0..n*n {
+            chi_slab[jk] = chi_init[(n - 1) * n * n + jk];
+        }
+        // right ghost (li=n+1): periodic = row 0 of chi
+        for jk in 0..n*n {
+            chi_slab[(n + 1) * n * n + jk] = chi_init[jk];
+        }
+
+        ngs_sweep_slab(&mut chi_slab, &rho, a, dx, n, n_local_i, 0, &p);
+
+        // Compare owned cells
+        for li in 1..=n {
+            for jk in 0..n*n {
+                let got = chi_slab[li * n * n + jk];
+                let exp = chi_serial[(li - 1) * n * n + jk];
+                assert!(
+                    (got - exp).abs() < 1e-12,
+                    "li={li} jk={jk}: slab={got:.10} serial={exp:.10}"
+                );
             }
         }
     }
