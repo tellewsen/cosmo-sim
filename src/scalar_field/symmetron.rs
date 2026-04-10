@@ -418,6 +418,122 @@ fn v_cycle_sym(
     for _ in 0..n_smooth { ngs_sweep(chi, rho, a, dx, n, p); }
 }
 
+// ── Distributed V-cycle ───────────────────────────────────────────────────────
+
+/// One multigrid V-cycle for the nonlinear Symmetron equation on a distributed slab.
+///
+/// On the way down, pre-smooths with NGS then restricts to a coarser slab.
+/// At the coarsest level (n_local_i < min_n_local or n ≤ 4), all ranks
+/// allgather the full grid, run a serial solve collectively, then copy their
+/// slab back — identical computation on every rank avoids a broadcast.
+///
+/// On the way up, prolongates the coarse correction back to the fine grid,
+/// applies it, clamps to [−1, 1], and post-smooths.
+///
+/// # Arguments
+/// * `chi`          — ghost-padded slab `(n_local_i+2)×N×N`, ghosts pre-filled
+/// * `rho`          — plain slab `n_local_i×N×N`
+/// * `n_local_i`    — owned i-cell count on this rank
+/// * `i_start`      — global i-index of this rank's first owned cell
+/// * `n_smooth`     — NGS sweeps at each pre/post-smooth step
+/// * `min_n_local`  — recurse until n_local_i < this, then do coarse solve
+#[cfg(feature = "mpi_parallel")]
+fn v_cycle_sym_mpi(
+    chi:           &mut Vec<Real>,
+    rho:           &[Real],
+    a:             Real,
+    dx:            Real,
+    n:             usize,
+    n_local_i:     usize,
+    i_start:       usize,
+    n_smooth:      usize,
+    min_n_local:   usize,
+    p:             &SymmetronParams,
+    mpi:           &crate::mpi::MpiContext,
+) {
+    // ── Pre-smooth ──────────────────────────────────────────────────────────
+    for _ in 0..n_smooth {
+        mpi.exchange_halos(chi, n_local_i, n, 1);
+        ngs_sweep_slab(chi, rho, a, dx, n, n_local_i, i_start, p);
+    }
+
+    // ── Coarsest level: allgather → serial solve → extract slab ────────────
+    if n_local_i < min_n_local || n <= 4 {
+        // Extract owned chi (no ghosts) for allgather
+        let local: Vec<Real> = (0..n_local_i)
+            .flat_map(|li| {
+                let li_p = li + 1;
+                (0..n * n).map(move |jk| chi[li_p * n * n + jk])
+            })
+            .collect();
+        let chi_full = mpi.allgather_slabs(&local, n);
+        let rho_full = mpi.allgather_slabs(rho, n);
+
+        // All ranks run identical serial NGS on the full coarse grid
+        let mut chi_coarse = chi_full;
+        for _ in 0..4 * n_smooth {
+            ngs_sweep(&mut chi_coarse, &rho_full, a, dx, n, p);
+        }
+
+        // Copy own slab back into chi (owned cells only)
+        for li in 0..n_local_i {
+            let li_p   = li + 1;
+            let g_base = (i_start + li) * n * n;
+            chi[li_p * n * n..li_p * n * n + n * n]
+                .copy_from_slice(&chi_coarse[g_base..g_base + n * n]);
+        }
+
+        // Post-smooth after coarse solve
+        for _ in 0..n_smooth {
+            mpi.exchange_halos(chi, n_local_i, n, 1);
+            ngs_sweep_slab(chi, rho, a, dx, n, n_local_i, i_start, p);
+        }
+        return;
+    }
+
+    // ── Restrict ────────────────────────────────────────────────────────────
+    let (chi_c_save, rho_c) = restrict_slab(chi, rho, n_local_i, n);
+    let mut chi_c = chi_c_save.clone();
+
+    let nc          = n / 2;
+    let n_local_ic  = n_local_i / 2;
+    let i_start_c   = i_start / 2;
+
+    // ── Recurse on coarse slab ──────────────────────────────────────────────
+    v_cycle_sym_mpi(
+        &mut chi_c, &rho_c,
+        a, dx * 2.0, nc,
+        n_local_ic, i_start_c,
+        n_smooth, min_n_local, p, mpi,
+    );
+
+    // ── Correction: delta = chi_c_new − chi_c_save ──────────────────────────
+    let mut delta_c: Vec<Real> = chi_c.iter()
+        .zip(chi_c_save.iter())
+        .map(|(new, old)| new - old)
+        .collect();
+
+    // Ghosts of delta_c must be current before trilinear prolongation
+    mpi.exchange_halos(&mut delta_c, n_local_ic, nc, 1);
+
+    // ── Prolongate correction to fine, apply, clamp ─────────────────────────
+    let corr_fine = prolongate_slab(&delta_c, n_local_i, n);
+    for li in 1..=n_local_i {
+        for j in 0..n as isize {
+            for k in 0..n as isize {
+                let c  = sidx(li, j, k, n);
+                chi[c] = (chi[c] + corr_fine[c]).clamp(-1.0, 1.0);
+            }
+        }
+    }
+
+    // ── Post-smooth ─────────────────────────────────────────────────────────
+    for _ in 0..n_smooth {
+        mpi.exchange_halos(chi, n_local_i, n, 1);
+        ngs_sweep_slab(chi, rho, a, dx, n, n_local_i, i_start, p);
+    }
+}
+
 // ── Public solver ─────────────────────────────────────────────────────────────
 
 /// Solve the quasi-static Symmetron EOM for χ.
@@ -962,5 +1078,44 @@ pub mod tests {
             }
         }
         assert!(max_err < 1e-10, "constant field not preserved: max_err = {max_err:.2e}");
+    }
+
+    #[cfg(feature = "mpi_parallel")]
+    #[test]
+    fn v_cycle_sym_mpi_reduces_residual() {
+        use crate::mpi::MpiContext;
+        let mpi = MpiContext::init();
+
+        let n = 16_usize;
+        let dx = 1.0_f64;
+        let a  = 0.8_f64;
+        let p  = SymmetronParams { n_smooth: 2, epsilon: 1e-8, max_iter: 200, ..SymmetronParams::default() };
+        let rho: Vec<Real> = (0..n*n*n).map(|i| 0.5 + 0.2 * (i as Real).cos()).collect();
+        let chi_eq: Vec<Real> = rho.iter().map(|&r| chi_equilibrium(r, a, &p)).collect();
+
+        // Perturb slightly from equilibrium
+        let mut chi_init = chi_eq.clone();
+        chi_init[n*n/2] += 0.3;
+
+        // n_local_i = n for single-rank test
+        let n_local_i = n;
+        let i_start   = 0;
+
+        // Build ghost-padded chi slab
+        let mut chi_slab = vec![0.0_f64; (n + 2) * n * n];
+        for li in 1..=n { for jk in 0..n*n { chi_slab[li*n*n+jk] = chi_init[(li-1)*n*n+jk]; } }
+        for jk in 0..n*n { chi_slab[jk] = chi_init[(n-1)*n*n+jk]; }
+        for jk in 0..n*n { chi_slab[(n+1)*n*n+jk] = chi_init[jk]; }
+
+        mpi.exchange_halos(&mut chi_slab, n_local_i, n, 1);
+        let (_, r0) = residual_slab(&chi_slab, &rho, a, dx, n, n_local_i, &p);
+
+        v_cycle_sym_mpi(&mut chi_slab, &rho, a, dx, n, n_local_i, i_start, 2, 4, &p, &mpi);
+
+        mpi.exchange_halos(&mut chi_slab, n_local_i, n, 1);
+        let (_, r1) = residual_slab(&chi_slab, &rho, a, dx, n, n_local_i, &p);
+
+        println!("v_cycle_sym_mpi: residual {r0:.3e} → {r1:.3e}");
+        assert!(r1 < r0, "V-cycle did not reduce residual: {r0:.3e} → {r1:.3e}");
     }
 }
