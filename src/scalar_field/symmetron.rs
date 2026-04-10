@@ -451,6 +451,11 @@ fn v_cycle_sym_mpi(
     p:             &SymmetronParams,
     mpi:           &crate::mpi::MpiContext,
 ) {
+    // Guard against zero-sized slab (can occur at coarse levels if size > n)
+    if n_local_i == 0 {
+        return;
+    }
+
     // ── Pre-smooth ──────────────────────────────────────────────────────────
     for _ in 0..n_smooth {
         mpi.exchange_halos(chi, n_local_i, n, 1);
@@ -497,6 +502,8 @@ fn v_cycle_sym_mpi(
 
     let nc          = n / 2;
     let n_local_ic  = n_local_i / 2;
+    debug_assert_eq!(i_start % 2, 0,
+        "i_start must be even for coarsening; ensure n_local_i is divisible by 2 at all levels");
     let i_start_c   = i_start / 2;
 
     // ── Recurse on coarse slab ──────────────────────────────────────────────
