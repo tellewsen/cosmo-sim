@@ -254,6 +254,7 @@ fn restrict_slab(
 /// so the function requires no MPI context.  The left/right coarse ghost cells
 /// are accessed at `lci_base = 0` and `lci_base = n_local_ic + 1` respectively.
 fn prolongate_slab(coarse: &[Real], n_local_i: usize, n: usize) -> Vec<Real> {
+    debug_assert!(n_local_i % 2 == 0, "n_local_i must be even for coarsening");
     let nc        = n / 2;
     let mut fine  = vec![0.0; (n_local_i + 2) * n * n];
 
@@ -919,5 +920,47 @@ pub mod tests {
         // cannot recover them exactly.  For a full-frequency sinusoid on 8 cells,
         // the theoretical max trilinear error is ~0.58.  Use 0.65 as a safe bound.
         assert!(max_err < 0.65, "round-trip error too large: {max_err:.4}");
+    }
+
+    #[test]
+    fn prolongate_slab_constant_exact() {
+        // Trilinear interpolation must exactly reproduce constant fields.
+        // If restrict+prolongate of a constant doesn't return the same constant,
+        // the index arithmetic in prolongate_slab is wrong.
+        let n = 8_usize;
+        let nc = n / 2;
+        let n_local_i = n;
+        let n_local_ic = n_local_i / 2;
+        let val = 0.42_f64;
+
+        let chi_const: Vec<Real> = vec![val; n * n * n];
+        let rho_dummy: Vec<Real> = vec![1.0; n * n * n];
+
+        // Build ghost-padded fine slab
+        let mut chi_slab = vec![0.0_f64; (n + 2) * n * n];
+        for li in 1..=n { for jk in 0..n*n { chi_slab[li*n*n+jk] = chi_const[(li-1)*n*n+jk]; } }
+        // periodic ghosts
+        for jk in 0..n*n { chi_slab[jk] = chi_const[(n-1)*n*n+jk]; }
+        for jk in 0..n*n { chi_slab[(n+1)*n*n+jk] = chi_const[jk]; }
+
+        let (chi_c, _) = restrict_slab(&chi_slab, &rho_dummy, n_local_i, n);
+
+        // Fill coarse ghosts (periodic)
+        let mut chi_c_ghosts = chi_c.clone();
+        for jk in 0..nc*nc {
+            chi_c_ghosts[jk] = chi_c[n_local_ic * nc * nc + jk]; // left ghost = last owned
+            chi_c_ghosts[(n_local_ic + 1) * nc * nc + jk] = chi_c[nc * nc + jk]; // right ghost = first owned
+        }
+
+        let fine_out = prolongate_slab(&chi_c_ghosts, n_local_i, n);
+
+        let mut max_err = 0.0_f64;
+        for li in 0..n_local_i {
+            for jk in 0..n*n {
+                let got = fine_out[(li + 1) * n * n + jk];
+                max_err = max_err.max((got - val).abs());
+            }
+        }
+        assert!(max_err < 1e-10, "constant field not preserved: max_err = {max_err:.2e}");
     }
 }
