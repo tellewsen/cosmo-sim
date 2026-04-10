@@ -31,6 +31,25 @@ The goal is **Fortran-competitive performance** via:
 
 ## Quick start
 
+### Prerequisites
+
+Rust stable toolchain + standard build tools.
+
+For the `mpi_parallel` feature, you also need:
+- An MPI implementation with dev headers (`libopenmpi-dev` or `mpich`)
+- `clang` (used by bindgen to generate MPI bindings)
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install libopenmpi-dev clang
+
+# Fedora/RHEL
+sudo dnf install openmpi-devel clang
+
+# macOS
+brew install open-mpi llvm
+```
+
 ### Build
 
 ```bash
@@ -45,6 +64,12 @@ cargo build --release --features fofr
 
 # Both
 cargo build --release --features symmetron,fofr
+
+# MPI multi-node (requires libopenmpi-dev + clang)
+cargo build --release --features mpi_parallel
+
+# MPI + f(R)
+cargo build --release --features mpi_parallel,fofr
 ```
 
 ### Run
@@ -64,6 +89,15 @@ Set log verbosity:
 ```bash
 RUST_LOG=debug ./target/release/cosmo_sim run --params params.toml
 ```
+
+### MPI run
+
+```bash
+mpirun -np 4 ./target/release/cosmo_sim run --params params.toml
+```
+
+Each rank uses `rayon` for intra-node threading (hybrid MPI+threads).
+Set `RAYON_NUM_THREADS` to control threads per rank.
 
 ---
 
@@ -125,12 +159,14 @@ src/
 ├── amr/
 │   └── grid.rs             Octree AMR: cells, octs, refinement
 ├── gravity/
-│   └── poisson.rs          V-cycle multigrid Poisson solver
+│   └── poisson.rs          V-cycle multigrid Poisson solver (serial + distributed FFT-PM)
+├── mpi/
+│   └── mod.rs              Slab decomposition, halo exchange, particle migration, reductions
 ├── particles/
 │   └── particles.rs        SoA particles, DKD leapfrog, CIC
 └── scalar_field/
-    ├── symmetron.rs        Symmetron: nonlinear NGS multigrid + non-static
-    └── fofr.rs             Hu-Sawicki f(R): nonlinear NGS multigrid
+    ├── symmetron.rs        Symmetron: nonlinear NGS multigrid + non-static + MPI
+    └── fofr.rs             Hu-Sawicki f(R): nonlinear NGS multigrid + MPI
 ```
 
 ---
@@ -150,10 +186,11 @@ The binary IC format expected by `load_ic()` is simply N×6 little-endian f64:
 | N_part | Grid | ISIS (Fortran+MPI) | cosmo_sim (Rust+rayon) |
 |--------|------|--------------------|------------------------|
 | 256³   | 256³ | ~minutes/step      | comparable (single node) |
-| 512³   | 512³ | requires MPI cluster | MPI support: roadmap |
+| 512³   | 512³ | requires MPI cluster | `--features mpi_parallel` |
 
-MPI support (via `rsmpi`) is the main missing piece for cluster-scale runs.
-The data structures are designed for domain decomposition.
+MPI support uses i-slab domain decomposition with hybrid MPI+rayon threading.
+Gravity uses a distributed FFT-PM Poisson solver (pencil transposes).
+Scalar field solvers (Symmetron, f(R)) use distributed FAS multigrid on local slabs.
 
 ---
 

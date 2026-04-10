@@ -120,7 +120,7 @@ impl MpiContext {
         n: usize,
         n_ghost: usize,
     ) {
-        use ::mpi::traits::{Communicator, Destination, Source};
+        use ::mpi::traits::Communicator;
         use ::mpi::point_to_point as p2p;
 
         let universe = unsafe {
@@ -142,7 +142,6 @@ impl MpiContext {
         // Send right boundary -> right neighbour's left ghost;
         // receive from left neighbour into left ghost.
         {
-            // Our rightmost n_ghost owned layers start at offset n_ghost*slab_size + (n_local_i - n_ghost)*slab_size
             let send_start = n_ghost * slab_size + (n_local_i - n_ghost) * slab_size;
             let send_end = send_start + ghost_count;
             let recv_start = 0;
@@ -151,8 +150,8 @@ impl MpiContext {
             let send_buf = grid[send_start..send_end].to_vec();
             let mut recv_buf = vec![0.0_f64; ghost_count];
 
-            // Tag 0: rightward sends, leftward receives
-            p2p::send_receive_into(&right_proc, &send_buf[..], &left_proc, &mut recv_buf[..]);
+            // send_receive_into(msg, destination, buf, source)
+            p2p::send_receive_into(&send_buf[..], &right_proc, &mut recv_buf[..], &left_proc);
             grid[recv_start..recv_end].copy_from_slice(&recv_buf);
         }
 
@@ -167,8 +166,7 @@ impl MpiContext {
             let send_buf = grid[send_start..send_end].to_vec();
             let mut recv_buf = vec![0.0_f64; ghost_count];
 
-            // Tag 1: leftward sends, rightward receives
-            p2p::send_receive_into(&left_proc, &send_buf[..], &right_proc, &mut recv_buf[..]);
+            p2p::send_receive_into(&send_buf[..], &left_proc, &mut recv_buf[..], &right_proc);
             grid[recv_start..recv_end].copy_from_slice(&recv_buf);
         }
     }
@@ -202,7 +200,8 @@ impl MpiContext {
         n_global: usize,
         box_size: Real,
     ) {
-        use ::mpi::traits::{Communicator, Destination, Source};
+        use ::mpi::traits::Communicator;
+        use ::mpi::point_to_point as p2p;
 
         let universe = unsafe {
             &*(&self._universe as *const ::mpi::environment::Universe)
@@ -254,13 +253,22 @@ impl MpiContext {
         let left_proc = world.process_at_rank(left_rank as i32);
         let right_proc = world.process_at_rank(right_rank as i32);
 
-        // Exchange with right neighbour: send right_buf, receive from right
         let send_right = flatten(&right_pos, &right_vel);
-        let (recv_from_right, _status) = right_proc.send_receive(&send_right[..], &left_proc);
+        let send_left  = flatten(&left_pos,  &left_vel);
 
-        // Exchange with left neighbour: send left_buf, receive from left
-        let send_left = flatten(&left_pos, &left_vel);
-        let (recv_from_left, _status) = left_proc.send_receive(&send_left[..], &right_proc);
+        // Step 1: exchange counts so each side knows how big a buffer to allocate.
+        let right_count = send_right.len() as i64;
+        let left_count  = send_left.len()  as i64;
+        let mut recv_from_left_count  = 0i64;
+        let mut recv_from_right_count = 0i64;
+        p2p::send_receive_into(&right_count, &right_proc, &mut recv_from_left_count,  &left_proc);
+        p2p::send_receive_into(&left_count,  &left_proc,  &mut recv_from_right_count, &right_proc);
+
+        // Step 2: exchange the actual particle data.
+        let mut recv_from_right = vec![0.0_f64; recv_from_right_count as usize];
+        let mut recv_from_left  = vec![0.0_f64; recv_from_left_count  as usize];
+        p2p::send_receive_into(&send_right[..], &right_proc, &mut recv_from_left[..],  &left_proc);
+        p2p::send_receive_into(&send_left[..],  &left_proc,  &mut recv_from_right[..], &right_proc);
 
         // Unpack received particles.
         let unflatten = |buf: &[Real], p: &mut Vec<[Real; 3]>, v: &mut Vec<[Real; 3]>| {
@@ -295,8 +303,7 @@ impl MpiContext {
     /// Global maximum across all ranks.
     #[cfg(feature = "mpi")]
     pub fn allreduce_max(&self, val: Real) -> Real {
-        use ::mpi::traits::Communicator;
-        use ::mpi::collective::SystemOperation;
+        use ::mpi::collective::{CommunicatorCollectives, SystemOperation};
         let world = self._universe.world();
         let mut result = 0.0_f64;
         world.all_reduce_into(&val, &mut result, SystemOperation::max());
@@ -311,8 +318,7 @@ impl MpiContext {
     /// Global sum across all ranks.
     #[cfg(feature = "mpi")]
     pub fn allreduce_sum(&self, val: Real) -> Real {
-        use ::mpi::traits::Communicator;
-        use ::mpi::collective::SystemOperation;
+        use ::mpi::collective::{CommunicatorCollectives, SystemOperation};
         let world = self._universe.world();
         let mut result = 0.0_f64;
         world.all_reduce_into(&val, &mut result, SystemOperation::sum());
@@ -332,23 +338,32 @@ impl MpiContext {
     #[cfg(feature = "mpi")]
     pub fn gather_to_root(&self, local: &[Real]) -> Option<Vec<Real>> {
         use ::mpi::traits::Communicator;
-        use ::mpi::collective::Root;
+        use ::mpi::collective::{CommunicatorCollectives, Root};
+        use ::mpi::datatype::PartitionMut;
+
         let world = self._universe.world();
-        let root_process = world.process_at_rank(0);
+        let root_proc = world.process_at_rank(0);
+
+        // All ranks allgather each other's counts so everyone knows all sizes.
+        let local_count = local.len() as i32;
+        let mut all_counts = vec![0i32; self.size];
+        world.all_gather_into(&local_count, &mut all_counts[..]);
 
         if self.is_root() {
-            // Gather counts first so we know total size
-            let local_len = local.len() as i32;
-            let counts = root_process.gather(&local_len);
-            // Slightly simplified: assume equal-sized slabs for now
-            let total: i32 = counts.iter().sum();
-            let mut gathered = vec![0.0_f64; total as usize];
-            root_process.gather_into_root(local, &mut gathered);
+            let total: usize = all_counts.iter().map(|&c| c as usize).sum();
+            let displs: Vec<i32> = all_counts.iter()
+                .scan(0i32, |acc, &c| { let d = *acc; *acc += c; Some(d) })
+                .collect();
+            let mut gathered = vec![0.0_f64; total];
+            let mut partition = PartitionMut::new(
+                &mut gathered[..],
+                &all_counts[..],
+                &displs[..],
+            );
+            root_proc.gather_varcount_into_root(local, &mut partition);
             Some(gathered)
         } else {
-            let local_len = local.len() as i32;
-            root_process.gather(&local_len);
-            root_process.gather_into(local);
+            root_proc.gather_varcount_into(local);
             None
         }
     }
@@ -364,8 +379,7 @@ impl MpiContext {
     /// deposit across slab boundaries.
     #[cfg(feature = "mpi")]
     pub fn allreduce_sum_vec(&self, local: &[Real]) -> Vec<Real> {
-        use ::mpi::traits::Communicator;
-        use ::mpi::collective::SystemOperation;
+        use ::mpi::collective::{CommunicatorCollectives, SystemOperation};
         let world = self._universe.world();
         let mut result = vec![0.0_f64; local.len()];
         world.all_reduce_into(local, &mut result[..], SystemOperation::sum());
@@ -387,7 +401,8 @@ impl MpiContext {
     /// may differ when `n` is not evenly divisible by the number of ranks.
     #[cfg(feature = "mpi")]
     pub fn allgather_slabs(&self, local: &[Real], n: usize) -> Vec<Real> {
-        use ::mpi::traits::Communicator;
+        use ::mpi::collective::CommunicatorCollectives;
+        use ::mpi::datatype::PartitionMut;
 
         let universe = unsafe {
             &*(&self._universe as *const ::mpi::environment::Universe)
@@ -409,12 +424,12 @@ impl MpiContext {
         }
 
         let mut global = vec![0.0_f64; n * n * n];
-        let partition = ::mpi::datatype::Partition::new(
+        let mut partition = PartitionMut::new(
             &mut global[..],
             &recv_counts[..],
             &recv_displs[..],
         );
-        world.all_gather_varcount_into(local, partition);
+        world.all_gather_varcount_into(local, &mut partition);
         global
     }
 
@@ -441,8 +456,6 @@ impl MpiContext {
     /// `n` is the global grid size (cubic grid assumed: same in all three dims).
     #[cfg(feature = "mpi")]
     pub fn transpose_i_to_j(&self, local_data: &[Real], n: usize) -> Vec<Real> {
-        use ::mpi::traits::Communicator;
-
         let universe = unsafe {
             &*(&self._universe as *const ::mpi::environment::Universe)
         };
@@ -497,16 +510,16 @@ impl MpiContext {
 
         // All-to-all-v exchange
         {
-            use ::mpi::datatype::Partition;
-            use ::mpi::collective::AllToAllVariadic;
+            use ::mpi::datatype::{Partition, PartitionMut};
+            use ::mpi::collective::CommunicatorCollectives;
 
-            let send_partition = Partition::new(&send_buf[..], send_counts.clone(), &send_displs[..]);
-            let mut recv_partition = ::mpi::datatype::PartitionMut::new(
+            let send_partition = Partition::new(&send_buf[..], &send_counts[..], &send_displs[..]);
+            let mut recv_partition = PartitionMut::new(
                 &mut recv_buf[..],
-                recv_counts.clone(),
+                &recv_counts[..],
                 &recv_displs[..],
             );
-            world.all_to_all_varcount(&send_partition, &mut recv_partition);
+            world.all_to_all_varcount_into(&send_partition, &mut recv_partition);
         }
 
         // Unpack recv buffers into j-pencil layout: output[lj][i][k]
@@ -545,8 +558,6 @@ impl MpiContext {
     /// output has shape `(n_local_i, n, n)`.
     #[cfg(feature = "mpi")]
     pub fn transpose_j_to_i(&self, local_data: &[Real], n: usize) -> Vec<Real> {
-        use ::mpi::traits::Communicator;
-
         let universe = unsafe {
             &*(&self._universe as *const ::mpi::environment::Universe)
         };
@@ -599,16 +610,16 @@ impl MpiContext {
         let mut recv_buf = vec![0.0; roffset];
 
         {
-            use ::mpi::datatype::Partition;
-            use ::mpi::collective::AllToAllVariadic;
+            use ::mpi::datatype::{Partition, PartitionMut};
+            use ::mpi::collective::CommunicatorCollectives;
 
-            let send_partition = Partition::new(&send_buf[..], send_counts.clone(), &send_displs[..]);
-            let mut recv_partition = ::mpi::datatype::PartitionMut::new(
+            let send_partition = Partition::new(&send_buf[..], &send_counts[..], &send_displs[..]);
+            let mut recv_partition = PartitionMut::new(
                 &mut recv_buf[..],
-                recv_counts.clone(),
+                &recv_counts[..],
                 &recv_displs[..],
             );
-            world.all_to_all_varcount(&send_partition, &mut recv_partition);
+            world.all_to_all_varcount_into(&send_partition, &mut recv_partition);
         }
 
         // Unpack: output has shape (n_local_i, n, n) in C-order (i slowest).

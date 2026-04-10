@@ -64,7 +64,9 @@ impl SimScratch {
 use crate::scalar_field::symmetron::{fifth_force_grid, solve_symmetron, SymmetronParams};
 
 #[cfg(feature = "fofr")]
-use crate::scalar_field::fofr::{fofr_fifth_force, solve_fofr, FofrParams};
+use crate::scalar_field::fofr::{fofr_fifth_force, FofrParams};
+#[cfg(all(feature = "fofr", not(feature = "mpi_parallel")))]
+use crate::scalar_field::fofr::solve_fofr;
 
 /// The complete simulation state.
 pub struct Simulation {
@@ -392,6 +394,16 @@ impl Simulation {
                 max_iter: 150,
                 n_smooth: 2,
             };
+            #[cfg(feature = "mpi_parallel")]
+            let chi_new = {
+                use crate::scalar_field::fofr::solve_fofr_mpi;
+                let n_local_i = self.mpi_ctx.slab_count(n);
+                let i0        = self.mpi_ctx.slab_start(n);
+                let rho_slab  = &self.scratch.rho[i0 * n * n..(i0 + n_local_i) * n * n];
+                let fofr_slab = solve_fofr_mpi(rho_slab, self.a, dx, n, &p, &self.cosmology, &self.mpi_ctx);
+                self.mpi_ctx.allgather_slabs(&fofr_slab, n)
+            };
+            #[cfg(not(feature = "mpi_parallel"))]
             let chi_new = solve_fofr(&self.scratch.rho, self.a, dx, n, &p, &self.cosmology);
             self.chi.copy_from_slice(&chi_new);
             let f5_raw = fofr_fifth_force(&self.chi, dx, n);

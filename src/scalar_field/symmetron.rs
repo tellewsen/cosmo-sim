@@ -102,7 +102,7 @@ pub fn dsource_dchi(
 ///
 /// `li` must be in [0, n_local_i + 2); `j` and `k` wrap periodically mod `n`.
 #[inline]
-fn sidx(li: usize, j: isize, k: isize, n: usize) -> usize {
+pub(crate) fn sidx(li: usize, j: isize, k: isize, n: usize) -> usize {
     let j = j.rem_euclid(n as isize) as usize;
     let k = k.rem_euclid(n as isize) as usize;
     li * n * n + j * n + k
@@ -199,17 +199,17 @@ fn residual_slab(
 
 /// Injection restriction: coarse slab ← fine slab (pick every-other cell).
 ///
-/// `fine`       — ghost-padded chi slab, shape `(n_local_i + 2) × N × N`.
+/// `fine`       — ghost-padded field slab, shape `(n_local_i + 2) × N × N`.
 /// `rho`        — plain rho slab, shape `n_local_i × N × N`.
 ///
 /// Returns:
-///   `chi_c` — ghost-padded coarse chi slab, shape `(n_local_ic + 2) × Nc × Nc`.
-///             Owned cells filled; ghosts are zero (caller must exchange halos).
-///   `rho_c` — plain coarse rho slab, shape `n_local_ic × Nc × Nc`.
+///   `field_c` — ghost-padded coarse field slab, shape `(n_local_ic + 2) × Nc × Nc`.
+///               Owned cells filled; ghosts are zero (caller must exchange halos).
+///   `rho_c`   — plain coarse rho slab, shape `n_local_ic × Nc × Nc`.
 ///
 /// Injection only reads owned fine cells, so no halo exchange is needed before
 /// this call.
-fn restrict_slab(
+pub(crate) fn restrict_slab(
     fine:      &[Real],
     rho:       &[Real],
     n_local_i: usize,
@@ -253,7 +253,7 @@ fn restrict_slab(
 /// This formula is independent of `i_start` (global rank offset cancels out),
 /// so the function requires no MPI context.  The left/right coarse ghost cells
 /// are accessed at `lci_base = 0` and `lci_base = n_local_ic + 1` respectively.
-fn prolongate_slab(coarse: &[Real], n_local_i: usize, n: usize) -> Vec<Real> {
+pub(crate) fn prolongate_slab(coarse: &[Real], n_local_i: usize, n: usize) -> Vec<Real> {
     debug_assert!(n_local_i % 2 == 0, "n_local_i must be even for coarsening");
     let nc        = n / 2;
     let mut fine  = vec![0.0; (n_local_i + 2) * n * n];
@@ -465,12 +465,11 @@ fn v_cycle_sym_mpi(
     // ── Coarsest level: allgather → serial solve → extract slab ────────────
     if n_local_i < min_n_local || n <= 4 {
         // Extract owned chi (no ghosts) for allgather
-        let local: Vec<Real> = (0..n_local_i)
-            .flat_map(|li| {
-                let li_p = li + 1;
-                (0..n * n).map(move |jk| chi[li_p * n * n + jk])
-            })
-            .collect();
+        let mut local = vec![0.0; n_local_i * n * n];
+        for li in 0..n_local_i {
+            let src = (li + 1) * n * n;
+            local[li * n * n..(li + 1) * n * n].copy_from_slice(&chi[src..src + n * n]);
+        }
         let chi_full = mpi.allgather_slabs(&local, n);
         let rho_full = mpi.allgather_slabs(rho, n);
 

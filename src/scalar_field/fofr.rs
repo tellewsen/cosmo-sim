@@ -334,6 +334,285 @@ pub fn fofr_fifth_force(u: &[Real], dx: Real, n: usize) -> Vec<[Real; 3]> {
     f5
 }
 
+// ── Distributed MPI solver ────────────────────────────────────────────────────
+
+/// One red-black Newton-Gauss-Seidel sweep on a ghost-padded local i-slab.
+///
+/// `u`          — ghost-padded slab `(n_local_i + 2) × N × N`. Ghosts must be
+///                current (call `exchange_halos` first).
+/// `rho`        — plain slab `n_local_i × N × N` (no ghosts).
+/// `i_start`    — global i-index of the first owned cell (li = 1).
+///                Used to keep red-black colouring consistent across ranks.
+#[cfg(feature = "mpi_parallel")]
+fn fofr_ngs_sweep_slab(
+    u:         &mut Vec<Real>,
+    rho:       &[Real],
+    a:         Real,
+    dx:        Real,
+    n:         usize,
+    n_local_i: usize,
+    i_start:   usize,
+    r0:        Real,
+    rbar_a:    Real,
+    p:         &FofrParams,
+    cosmo:     &Cosmology,
+) {
+    use crate::scalar_field::symmetron::sidx;
+    let inv_dx2 = 1.0 / (dx * dx);
+    let snap    = u.clone();
+
+    for color in 0..2_usize {
+        for li in 1..=n_local_i {
+            let i_global = i_start + li - 1;
+            for j in 0..n as isize {
+                let k_start = ((i_global + j as usize) % 2 + color) % 2;
+                let mut k   = k_start as isize;
+                while k < n as isize {
+                    let c     = sidx(li, j, k, n);
+                    let rho_c = rho[(li - 1) * n * n + j as usize * n + k as usize];
+                    let u_c   = snap[c];
+                    let nb    = snap[sidx(li + 1, j,     k,     n)]
+                              + snap[sidx(li - 1, j,     k,     n)]
+                              + snap[sidx(li,     j + 1, k,     n)]
+                              + snap[sidx(li,     j - 1, k,     n)]
+                              + snap[sidx(li,     j,     k + 1, n)]
+                              + snap[sidx(li,     j,     k - 1, n)];
+                    let (src, r_u) = fofr_source(u_c, rho_c, a, r0, rbar_a, cosmo, p);
+                    let dsrc  = dfofr_source_du(u_c, r_u, a, cosmo.h, p);
+                    let lap   = (nb - 6.0 * u_c) * inv_dx2;
+                    let denom = -6.0 * inv_dx2 - dsrc;
+                    if denom.abs() > 1e-30 {
+                        u[c] = (u_c - (lap - src) / denom).min(0.0);
+                    }
+                    k += 2;
+                }
+            }
+        }
+    }
+}
+
+/// Pointwise residual  r = ∇²u − S(u)  on owned cells of a ghost-padded slab.
+///
+/// Returns `(residuals, max_abs_residual)`.
+/// `residuals` is a plain slab (n_local_i × N × N, no ghosts).
+/// Ghosts of `u` must be current before calling.
+#[cfg(feature = "mpi_parallel")]
+fn fofr_residual_slab(
+    u:         &[Real],
+    rho:       &[Real],
+    a:         Real,
+    dx:        Real,
+    n:         usize,
+    n_local_i: usize,
+    r0:        Real,
+    rbar_a:    Real,
+    p:         &FofrParams,
+    cosmo:     &Cosmology,
+) -> (Vec<Real>, Real) {
+    use crate::scalar_field::symmetron::sidx;
+    let inv_dx2 = 1.0 / (dx * dx);
+    let mut res: Vec<Real> = vec![0.0; n_local_i * n * n];
+    let mut res_max: Real  = 0.0;
+
+    for li in 1..=n_local_i {
+        for j in 0..n as isize {
+            for k in 0..n as isize {
+                let c_pad   = sidx(li, j, k, n);
+                let c_plain = (li - 1) * n * n + j as usize * n + k as usize;
+                let lap = (u[sidx(li + 1, j,     k,     n)]
+                         + u[sidx(li - 1, j,     k,     n)]
+                         + u[sidx(li,     j + 1, k,     n)]
+                         + u[sidx(li,     j - 1, k,     n)]
+                         + u[sidx(li,     j,     k + 1, n)]
+                         + u[sidx(li,     j,     k - 1, n)]
+                         - 6.0 * u[c_pad]) * inv_dx2;
+                let (src, _) = fofr_source(u[c_pad], rho[c_plain], a, r0, rbar_a, cosmo, p);
+                let r         = lap - src;
+                res[c_plain]  = r;
+                res_max       = res_max.max(r.abs());
+            }
+        }
+    }
+    (res, res_max)
+}
+
+/// One FAS multigrid V-cycle for the f(R) equation on a distributed i-slab.
+///
+/// At the coarsest level (n_local_i < min_n_local or n ≤ 4) all ranks
+/// allgather the full grid, run a serial NGS solve collectively, then copy
+/// their slab back.  On the way up, the coarse correction is prolongated to
+/// the fine grid and the physical bound f_R ≤ 0 is enforced.
+///
+/// # Arguments
+/// * `u`            — ghost-padded slab `(n_local_i+2)×N×N`, ghosts pre-filled
+/// * `rho`          — plain slab `n_local_i×N×N`
+/// * `n_local_i`    — owned i-cell count on this rank
+/// * `i_start`      — global i-index of this rank's first owned cell
+/// * `n_smooth`     — NGS sweeps at each pre/post-smooth step
+/// * `min_n_local`  — recurse until n_local_i < this, then do coarse solve
+#[cfg(feature = "mpi_parallel")]
+fn v_cycle_fofr_mpi(
+    u:           &mut Vec<Real>,
+    rho:         &[Real],
+    a:           Real,
+    dx:          Real,
+    n:           usize,
+    n_local_i:   usize,
+    i_start:     usize,
+    n_smooth:    usize,
+    min_n_local: usize,
+    r0:          Real,
+    rbar_a:      Real,
+    p:           &FofrParams,
+    cosmo:       &Cosmology,
+    mpi:         &crate::mpi::MpiContext,
+) {
+    use crate::scalar_field::symmetron::{sidx, restrict_slab, prolongate_slab};
+
+    if n_local_i == 0 { return; }
+
+    // ── Pre-smooth ──────────────────────────────────────────────────────────
+    for _ in 0..n_smooth {
+        mpi.exchange_halos(u, n_local_i, n, 1);
+        fofr_ngs_sweep_slab(u, rho, a, dx, n, n_local_i, i_start, r0, rbar_a, p, cosmo);
+    }
+
+    // ── Coarsest level: allgather → serial solve → extract slab ────────────
+    if n_local_i < min_n_local || n <= 4 {
+        let mut local = vec![0.0; n_local_i * n * n];
+        for li in 0..n_local_i {
+            let src = (li + 1) * n * n;
+            local[li * n * n..(li + 1) * n * n].copy_from_slice(&u[src..src + n * n]);
+        }
+        let u_full   = mpi.allgather_slabs(&local, n);
+        let rho_full = mpi.allgather_slabs(rho, n);
+
+        let mut u_coarse = u_full;
+        // Enforce physical bound before serial NGS
+        u_coarse.iter_mut().for_each(|v| { if *v > 0.0 { *v = -1e-30; } });
+        for _ in 0..4 * n_smooth {
+            fofr_ngs_sweep(&mut u_coarse, &rho_full, a, dx, n, r0, rbar_a, p, cosmo);
+        }
+
+        for li in 0..n_local_i {
+            let li_p   = li + 1;
+            let g_base = (i_start + li) * n * n;
+            u[li_p * n * n..li_p * n * n + n * n]
+                .copy_from_slice(&u_coarse[g_base..g_base + n * n]);
+        }
+
+        for _ in 0..n_smooth {
+            mpi.exchange_halos(u, n_local_i, n, 1);
+            fofr_ngs_sweep_slab(u, rho, a, dx, n, n_local_i, i_start, r0, rbar_a, p, cosmo);
+        }
+        return;
+    }
+
+    // ── Restrict ────────────────────────────────────────────────────────────
+    let (u_c_save, rho_c) = restrict_slab(u, rho, n_local_i, n);
+    let mut u_c = u_c_save.clone();
+    // Clamp initial coarse guess to the physical bound f_R ≤ 0
+    u_c.iter_mut().for_each(|v| { if *v > 0.0 { *v = -1e-30; } });
+
+    let nc         = n / 2;
+    let n_local_ic = n_local_i / 2;
+    debug_assert_eq!(i_start % 2, 0,
+        "i_start must be even for coarsening; ensure n_local_i is divisible by 2 at all levels");
+    let i_start_c  = i_start / 2;
+
+    // ── Recurse on coarse slab ──────────────────────────────────────────────
+    v_cycle_fofr_mpi(
+        &mut u_c, &rho_c,
+        a, dx * 2.0, nc,
+        n_local_ic, i_start_c,
+        n_smooth, min_n_local,
+        r0, rbar_a, p, cosmo, mpi,
+    );
+
+    // ── Correction: delta = u_c_new − u_c_save ──────────────────────────────
+    let mut delta_c: Vec<Real> = u_c.iter()
+        .zip(u_c_save.iter())
+        .map(|(new, old)| new - old)
+        .collect();
+
+    // Ghosts of delta_c must be current before trilinear prolongation
+    mpi.exchange_halos(&mut delta_c, n_local_ic, nc, 1);
+
+    // ── Prolongate correction to fine, apply, enforce f_R ≤ 0 ──────────────
+    let corr_fine = prolongate_slab(&delta_c, n_local_i, n);
+    for li in 1..=n_local_i {
+        for j in 0..n as isize {
+            for k in 0..n as isize {
+                let c  = sidx(li, j, k, n);
+                u[c] = (u[c] + corr_fine[c]).min(0.0);
+            }
+        }
+    }
+
+    // ── Post-smooth ─────────────────────────────────────────────────────────
+    for _ in 0..n_smooth {
+        mpi.exchange_halos(u, n_local_i, n, 1);
+        fofr_ngs_sweep_slab(u, rho, a, dx, n, n_local_i, i_start, r0, rbar_a, p, cosmo);
+    }
+}
+
+/// Solve the Hu-Sawicki f_R equation on a distributed i-slab.
+///
+/// Each rank supplies its local slab of `rho` (shape `n_local_i × N × N`,
+/// no ghost cells). Ghost exchange is handled internally.
+///
+/// Returns the local slab of f_R (shape `n_local_i × N × N`, no ghosts).
+/// Caller should call `mpi.allgather_slabs(&fofr_slab, n)` to assemble the
+/// full grid for `fofr_fifth_force`.
+#[cfg(feature = "mpi_parallel")]
+pub fn solve_fofr_mpi(
+    rho_slab:  &[Real],
+    a:         Real,
+    dx:        Real,
+    n:         usize,
+    p:         &FofrParams,
+    cosmo:     &Cosmology,
+    mpi:       &crate::mpi::MpiContext,
+) -> Vec<Real> {
+    let n_local_i = mpi.slab_count(n);
+    let i_start   = mpi.slab_start(n);
+    debug_assert_eq!(rho_slab.len(), n_local_i * n * n,
+        "rho_slab length mismatch: {} vs {}", rho_slab.len(), n_local_i * n * n);
+
+    let r0     = r_bar(1.0, cosmo);
+    let rbar_a = r_bar(a, cosmo);
+    // Epoch-specific background as initial guess (same as serial solve_fofr)
+    let bg_val = fofr_of_r(rbar_a, r0, p);
+
+    // Ghost-padded slab initialised to background value
+    let mut u = vec![bg_val; (n_local_i + 2) * n * n];
+
+    // Outer V-cycle loop
+    for iter in 0..p.max_iter {
+        mpi.exchange_halos(&mut u, n_local_i, n, 1);
+        let (_, res_local) = fofr_residual_slab(
+            &u, rho_slab, a, dx, n, n_local_i, r0, rbar_a, p, cosmo,
+        );
+        let res_max = mpi.allreduce_max(res_local);
+        log::debug!("f(R) MPI iter {iter}: |r|_∞ = {res_max:.3e}");
+        if res_max < p.epsilon { break; }
+        v_cycle_fofr_mpi(
+            &mut u, rho_slab,
+            a, dx, n, n_local_i, i_start,
+            2, 4, r0, rbar_a, p, cosmo, mpi,
+        );
+    }
+
+    // Strip ghost cells and return owned slab
+    let mut result = vec![0.0; n_local_i * n * n];
+    for li in 0..n_local_i {
+        let src = (li + 1) * n * n;
+        let dst = li * n * n;
+        result[dst..dst + n * n].copy_from_slice(&u[src..src + n * n]);
+    }
+    result
+}
+
 // ── Unit tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
