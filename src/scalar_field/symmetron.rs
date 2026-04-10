@@ -579,6 +579,64 @@ pub fn solve_symmetron(
     chi
 }
 
+/// Solve the quasi-static Symmetron EOM for χ on a distributed i-slab.
+///
+/// Each rank supplies its local slab of `rho` (shape `n_local_i × N × N`,
+/// no ghost cells). The function handles ghost exchange internally.
+///
+/// Returns the local slab of χ (shape `n_local_i × N × N`, no ghosts).
+/// Caller should call `mpi.allgather_slabs(&chi_slab, n)` to assemble the
+/// full grid for `fifth_force_grid`.
+#[cfg(feature = "mpi_parallel")]
+pub fn solve_symmetron_mpi(
+    rho_slab:  &[Real],
+    a:         Real,
+    dx:        Real,
+    n:         usize,
+    p:         &SymmetronParams,
+    mpi:       &crate::mpi::MpiContext,
+) -> Vec<Real> {
+    let n_local_i = mpi.slab_count(n);
+    let i_start   = mpi.slab_start(n);
+    debug_assert_eq!(rho_slab.len(), n_local_i * n * n,
+        "rho_slab length mismatch: {} vs {}", rho_slab.len(), n_local_i * n * n);
+
+    // Initialise ghost-padded chi from equilibrium
+    let mut chi = vec![0.0; (n_local_i + 2) * n * n];
+    for li in 1..=n_local_i {
+        for j in 0..n {
+            for k in 0..n {
+                let c     = sidx(li, j as isize, k as isize, n);
+                let rho_c = rho_slab[(li - 1) * n * n + j * n + k];
+                chi[c]    = chi_equilibrium(rho_c, a, p);
+            }
+        }
+    }
+
+    // Outer V-cycle loop
+    for iter in 0..p.max_iter {
+        mpi.exchange_halos(&mut chi, n_local_i, n, 1);
+        let (_, res_local) = residual_slab(&chi, rho_slab, a, dx, n, n_local_i, p);
+        let res_max        = mpi.allreduce_max(res_local);
+        log::trace!("Symmetron MPI iter {iter}: |r|_∞ = {res_max:.3e}");
+        if res_max < p.epsilon { break; }
+        v_cycle_sym_mpi(
+            &mut chi, rho_slab,
+            a, dx, n, n_local_i, i_start,
+            2, 4, p, mpi,
+        );
+    }
+
+    // Return owned cells (strip ghosts)
+    let mut result = vec![0.0; n_local_i * n * n];
+    for li in 0..n_local_i {
+        let src = (li + 1) * n * n;
+        let dst = li * n * n;
+        result[dst..dst + n * n].copy_from_slice(&chi[src..src + n * n]);
+    }
+    result
+}
+
 // ── Fifth force ───────────────────────────────────────────────────────────────
 
 /// Compute the fifth-force acceleration field  a_5 = (β₀/a) ∇χ.
@@ -1124,5 +1182,41 @@ pub mod tests {
 
         println!("v_cycle_sym_mpi: residual {r0:.3e} → {r1:.3e}");
         assert!(r1 < r0, "V-cycle did not reduce residual: {r0:.3e} → {r1:.3e}");
+    }
+
+    #[cfg(feature = "mpi_parallel")]
+    #[test]
+    fn solve_symmetron_mpi_matches_serial() {
+        use crate::mpi::MpiContext;
+        let mpi = MpiContext::init();
+
+        let n   = 16_usize;
+        let l   = 16.0_f64;
+        let dx  = l / n as Real;
+        let a   = 0.8_f64;
+        let p   = SymmetronParams { epsilon: 1e-6, max_iter: 200, ..SymmetronParams::default() };
+        let rho: Vec<Real> = (0..n*n*n).map(|i| 0.5 + 0.3 * (i as Real / 7.0).sin().abs()).collect();
+
+        // Serial solve on full grid
+        let chi_serial = solve_symmetron(&rho, a, dx, n, &p);
+
+        // MPI solve: single rank owns full slab
+        let n_local_i = mpi.slab_count(n);
+        let i0        = mpi.slab_start(n);
+        let rho_slab  = &rho[i0 * n * n..(i0 + n_local_i) * n * n];
+        let chi_slab  = solve_symmetron_mpi(rho_slab, a, dx, n, &p, &mpi);
+
+        // Reconstruct full chi from slab (single rank: already full)
+        let chi_mpi = mpi.allgather_slabs(&chi_slab, n);
+
+        let max_err = chi_serial.iter()
+            .zip(chi_mpi.iter())
+            .map(|(s, m)| (s - m).abs())
+            .fold(0.0_f64, f64::max);
+
+        println!("solve_symmetron_mpi vs serial max error: {max_err:.3e}");
+        // Both converge to the same tolerance — allow 10× tolerance as slop
+        assert!(max_err < 10.0 * p.epsilon,
+            "MPI solve diverges from serial: max error = {max_err:.3e}");
     }
 }
