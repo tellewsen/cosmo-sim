@@ -289,10 +289,9 @@ Added `src/mpi/mod.rs` with the `mpi_parallel` cargo feature (depends on `mpi` c
 - [ ] Load balancing for AMR (currently assumes uniform grid)
 
 **TODO (performance):**
-- [ ] Pre-allocate simulation scratch buffers (density, source, phi, grav_grid, FFT arrays)
-  and reuse across steps instead of allocating fresh Vecs each step. At 256³ the sim
-  allocates/frees ~1 GB per step — this thrashes the allocator and was the cause of
-  the 36-hour Windows runtime. Fix: pass mutable scratch into the step loop.
+- [x] Pre-allocate simulation scratch buffers (density, source, phi, grav_grid, FFT arrays)
+  — done via `SimScratch` struct passed into step loop. Eliminates ~1 GB/step heap churn
+  that caused the 36-hour Windows runtime.
 
 ---
 
@@ -306,6 +305,33 @@ Added `src/mpi/mod.rs` with the `mpi_parallel` cargo feature (depends on `mpi` c
 | `analysis/ic_debug_norm.py` | Step-by-step IC normalization derivation |
 | `analysis/ic_amplitude_check.py` | Expected IC amplitudes from theory |
 | `analysis/plot_isis.py` | ISIS verification figure generator |
+| `analysis/render_animation.py` | Cosmic web animation from snapshot series (MP4/GIF) |
 | `analysis/params/lcdm_test.toml` | ΛCDM test run config (64³, 64 Mpc/h, WMAP7) |
 | `analysis/params/symmetron_test.toml` | Symmetron test run config |
 | `analysis/params/lcdm_ic_check.toml` | Short run (a=0.02→0.025) to check IC P(k) |
+| `analysis/params/lcdm_anim.toml` | 128³ 64 Mpc/h run with 50 snapshots for animation |
+
+---
+
+## Animation
+
+`analysis/render_animation.py` produces a dark matter cosmic web animation from any
+snapshot series. Features:
+
+- **Multi-scale Gaussian splatting**: 4 blur passes (σ=1, 5, 20, 60 px) composited with
+  log1p weighting — filament-scale layer dominant, approximates adaptive SPH kernel rendering
+- **Standard cosmic web colormap**: black → indigo → royal blue → cyan → white
+  (matches Millennium/IllustrisTNG dark matter renders)
+- **Cosmic time label**: z, scale factor a, and age in Myr/Gyr (ΛCDM cosmology)
+- **Held last frame**: final snapshot stays on screen for 3 seconds to allow pausing
+
+Usage:
+```bash
+uv run python analysis/render_animation.py \
+    --snapdir output_lcdm_anim \
+    --output animation.mp4 \
+    --box-size 64
+```
+
+Recommended: run the simulation with `lcdm_anim.toml` (50 snapshots a=0.1→1.0) then
+render at default 5 fps (= 10 s evolution + 3 s hold).
