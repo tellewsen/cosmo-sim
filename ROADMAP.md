@@ -283,7 +283,8 @@ Added `src/mpi/mod.rs` with the `mpi_parallel` cargo feature (depends on `mpi` c
 **TODO (MPI):**
 - [x] Distributed FFT for Poisson solve (pencil decomposition) — done
 - [ ] Replace density allreduce with per-rank CIC + ghost exchange (last O(N³) comm)
-- [ ] Distributed multigrid for scalar field solvers (symmetron/fofr on local slabs)
+- [x] Distributed multigrid for Symmetron scalar field solver (on local slabs)
+- [ ] Distributed multigrid for f(R) scalar field solver (follow-on)
 - [ ] Multi-rank integration test (requires MPI runtime in CI)
 - [ ] Particle gather to rank 0 for snapshot/power spectrum output
 - [ ] Load balancing for AMR (currently assumes uniform grid)
