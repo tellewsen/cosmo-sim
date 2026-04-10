@@ -197,6 +197,45 @@ fn residual_slab(
     (res, res_max)
 }
 
+/// Injection restriction: coarse slab ← fine slab (pick every-other cell).
+///
+/// `fine`       — ghost-padded chi slab, shape `(n_local_i + 2) × N × N`.
+/// `rho`        — plain rho slab, shape `n_local_i × N × N`.
+///
+/// Returns:
+///   `chi_c` — ghost-padded coarse chi slab, shape `(n_local_ic + 2) × Nc × Nc`.
+///             Owned cells filled; ghosts are zero (caller must exchange halos).
+///   `rho_c` — plain coarse rho slab, shape `n_local_ic × Nc × Nc`.
+///
+/// Injection only reads owned fine cells, so no halo exchange is needed before
+/// this call.
+fn restrict_slab(
+    fine:      &[Real],
+    rho:       &[Real],
+    n_local_i: usize,
+    n:         usize,
+) -> (Vec<Real>, Vec<Real>) {
+    let nc        = n / 2;
+    let n_local_ic = n_local_i / 2;
+    let mut chi_c = vec![0.0; (n_local_ic + 2) * nc * nc];
+    let mut rho_c = vec![0.0; n_local_ic * nc * nc];
+
+    // Coarse owned cell lci maps to fine owned cell li = 2*lci + 1
+    // (global: gc = i_start/2 + lci  →  gf = 2*gc = i_start + 2*lci  →  li = 2*lci + 1)
+    for lci in 0..n_local_ic {
+        let li_f = 2 * lci + 1; // fine ghost-padded li for this coarse cell
+        for j in 0..nc {
+            for k in 0..nc {
+                chi_c[(lci + 1) * nc * nc + j * nc + k] =
+                    fine[li_f * n * n + (2 * j) * n + (2 * k)];
+                rho_c[lci * nc * nc + j * nc + k] =
+                    rho[(li_f - 1) * n * n + (2 * j) * n + (2 * k)];
+            }
+        }
+    }
+    (chi_c, rho_c)
+}
+
 /// Equilibrium value of χ at a given overdensity ρ/ρ̄.
 ///
 /// χ_eq = sqrt(max(0, 1 − ρ/M²))  in the broken phase, 0 in the restored phase.
@@ -725,6 +764,47 @@ pub mod tests {
                     (got - exp).abs() < 1e-12,
                     "li={li} jk={jk}: slab={got:.10} serial={exp:.10}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn restrict_slab_matches_serial() {
+        // restrict_slab with n_local_i = n must give the same result as restrict_uniform
+        let n = 8_usize;
+        let rho: Vec<Real> = (0..n*n*n).map(|i| 1.0 + 0.3 * (i as Real).cos()).collect();
+        let chi: Vec<Real> = (0..n*n*n).map(|i| 0.5 * (i as Real / 5.0).sin()).collect();
+
+        // Serial restriction
+        let chi_c_serial = restrict_uniform(&chi, n);
+        let rho_c_serial = restrict_uniform(&rho, n);
+
+        // Build ghost-padded chi slab (n_local_i = n, periodic ghosts)
+        let n_local_i = n;
+        let mut chi_slab = vec![0.0_f64; (n + 2) * n * n];
+        for li in 1..=n { for jk in 0..n*n { chi_slab[li*n*n+jk] = chi[(li-1)*n*n+jk]; } }
+        for jk in 0..n*n { chi_slab[jk] = chi[(n-1)*n*n+jk]; }
+        for jk in 0..n*n { chi_slab[(n+1)*n*n+jk] = chi[jk]; }
+
+        let (chi_c_slab, rho_c_slab) = restrict_slab(&chi_slab, &rho, n_local_i, n);
+
+        let nc = n / 2;
+        let n_local_ic = n_local_i / 2;
+
+        // Compare owned coarse cells (lci+1 in padded, lci in serial 0-indexed)
+        for lci in 0..n_local_ic {
+            for j in 0..nc {
+                for k in 0..nc {
+                    let got_chi = chi_c_slab[(lci + 1) * nc * nc + j * nc + k];
+                    let exp_chi = chi_c_serial[lci * nc * nc + j * nc + k];
+                    assert!((got_chi - exp_chi).abs() < 1e-12,
+                        "chi: lci={lci} j={j} k={k}: {got_chi:.10} vs {exp_chi:.10}");
+
+                    let got_rho = rho_c_slab[lci * nc * nc + j * nc + k];
+                    let exp_rho = rho_c_serial[lci * nc * nc + j * nc + k];
+                    assert!((got_rho - exp_rho).abs() < 1e-12,
+                        "rho: lci={lci} j={j} k={k}: {got_rho:.10} vs {exp_rho:.10}");
+                }
             }
         }
     }
