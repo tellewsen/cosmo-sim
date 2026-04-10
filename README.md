@@ -20,10 +20,10 @@ The goal is **Fortran-competitive performance** via:
 |-----------|--------|-----------|
 | Particle drift/kick | DKD leapfrog, supercomoving time | Martel & Shapiro 1998 |
 | Density assignment | Cloud-In-Cell (CIC) | Hockney & Eastwood 1981 |
-| Gravity | V-cycle multigrid Poisson | Guillet & Teyssier 2011; RAMSES |
-| **Symmetron** scalar field | Nonlinear Newton-GS multigrid | Llinares et al. 2014 (ISIS) |
+| Gravity | V-cycle multigrid Poisson; distributed FFT-PM (`mpi_parallel`) | Guillet & Teyssier 2011; RAMSES |
+| **Symmetron** scalar field | Nonlinear Newton-GS multigrid; distributed FAS (`mpi_parallel`) | Llinares et al. 2014 (ISIS) |
 | Symmetron non-static | Leapfrog χ + χ̇ | Llinares & Mota 2014 |
-| **f(R) gravity** (Hu-Sawicki) | Nonlinear Newton-GS multigrid | Llinares et al. 2014 (ISIS) |
+| **f(R) gravity** (Hu-Sawicki) | Nonlinear Newton-GS multigrid; distributed FAS (`mpi_parallel`) | Llinares et al. 2014 (ISIS) |
 | AMR refinement | Graded octree | Teyssier 2002 (RAMSES) |
 | Background cosmology | flat ΛCDM | Planck 2018 defaults |
 
