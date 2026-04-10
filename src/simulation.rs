@@ -352,6 +352,17 @@ impl Simulation {
                 max_iter: 150,
                 n_smooth: 2,
             };
+            #[cfg(feature = "mpi_parallel")]
+            let chi_new = {
+                use crate::scalar_field::symmetron::solve_symmetron_mpi;
+                let n_local_i = self.mpi_ctx.slab_count(n);
+                let i0        = self.mpi_ctx.slab_start(n);
+                let rho_slab  = &self.scratch.rho[i0 * n * n..(i0 + n_local_i) * n * n];
+                let chi_slab  = solve_symmetron_mpi(rho_slab, self.a, dx, n, &p, &self.mpi_ctx);
+                self.mpi_ctx.allgather_slabs(&chi_slab, n)
+            };
+
+            #[cfg(not(feature = "mpi_parallel"))]
             let chi_new = solve_symmetron(&self.scratch.rho, self.a, dx, n, &p);
             self.chi.copy_from_slice(&chi_new);
             let f5_raw = fifth_force_grid(&self.chi, dx, n, self.a, &p);
