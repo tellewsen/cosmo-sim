@@ -681,7 +681,8 @@ impl Simulation {
             use crate::hydro::profiles::{friends_of_friends, stacked_profiles, write_profiles};
             let n_grid   = self.config.run.n_grid as usize;
             let box_size = self.config.run.box_size;
-            let b        = 0.2 * box_size / self.config.particles.n_part as Real;
+            // Linking length: b = 0.2 × mean inter-particle spacing = 0.2 × L / n_part^(1/3)
+            let b        = 0.2 * box_size / (self.config.particles.n_part as Real).cbrt();
             let groups   = friends_of_friends(&parts.pos, b);
 
             // High mass: M > 10^13.5 M_sun/h

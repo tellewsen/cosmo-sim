@@ -94,6 +94,8 @@ pub fn stacked_profiles(
     groups:   &[Vec<usize>],
 ) -> ([Real; N_BINS], [Real; N_BINS], [Real; N_BINS], [Real; N_BINS], [usize; N_BINS], usize) {
     let dx = box_size / n_grid as Real;
+    debug_assert_eq!(gas_rho.len(), n_grid * n_grid * n_grid, "gas_rho length mismatch");
+    debug_assert_eq!(gas_u.len(),   n_grid * n_grid * n_grid, "gas_u length mismatch");
 
     // Temperature from u: T = u / (k_B / (μ m_p))
     let u_to_t = 1.0 / (0.008314 / 0.59);
@@ -192,9 +194,9 @@ pub fn stacked_profiles(
         if counts[bin] > 0 {
             rho_gas[bin] = rho_gas_sum[bin] / counts[bin] as Real;
             t_mean[bin] = t_sum[bin] / counts[bin] as Real;
-            rho_dm[bin] =
-                rho_dm_sum[bin] / counts[bin] as Real / n_halos.max(1) as Real;
         }
+        // DM: average particle count per bin across halos (not normalised by gas cell count)
+        rho_dm[bin] = rho_dm_sum[bin] / n_halos.max(1) as Real;
     }
 
     (r_mid, rho_gas, t_mean, rho_dm, counts, n_halos)
