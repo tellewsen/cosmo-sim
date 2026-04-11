@@ -676,6 +676,37 @@ impl Simulation {
                 gf.write_all(&self.scratch.gas_u[i].to_le_bytes()).unwrap();
             }
             log::info!("Gas snapshot {idx:04} → {gas_path}");
+
+            // ── Halo profiles ─────────────────────────────────────────────
+            use crate::hydro::profiles::{friends_of_friends, stacked_profiles, write_profiles};
+            let n_grid   = self.config.run.n_grid as usize;
+            let box_size = self.config.run.box_size;
+            let b        = 0.2 * box_size / self.config.particles.n_part as Real;
+            let groups   = friends_of_friends(&parts.pos, b);
+
+            // High mass: M > 10^13.5 M_sun/h
+            let (r, rg, t, rd, ct, nh) = stacked_profiles(
+                &parts.pos, &self.scratch.gas_rho, &self.scratch.gas_u,
+                n_grid, box_size, parts.mass,
+                self.config.cosmology.omega_m,
+                10.0_f64.powf(13.5), Real::MAX, &groups,
+            );
+            write_profiles(
+                &format!("{dir}/halo_profiles_highmass_{idx:04}.txt"),
+                &r, &rg, &t, &rd, &ct, nh, "M>10^13.5",
+            );
+
+            // Low mass: M < 10^12 M_sun/h
+            let (r, rg, t, rd, ct, nh) = stacked_profiles(
+                &parts.pos, &self.scratch.gas_rho, &self.scratch.gas_u,
+                n_grid, box_size, parts.mass,
+                self.config.cosmology.omega_m,
+                0.0, 10.0_f64.powf(12.0), &groups,
+            );
+            write_profiles(
+                &format!("{dir}/halo_profiles_lowmass_{idx:04}.txt"),
+                &r, &rg, &t, &rd, &ct, nh, "M<10^12",
+            );
         }
 
         // ── Power spectrum ────────────────────────────────────────────────
