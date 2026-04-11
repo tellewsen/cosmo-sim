@@ -656,7 +656,6 @@ impl Simulation {
         // ── Gas snapshot ─────────────────────────────────────────────────
         #[cfg(feature = "hydro")]
         {
-            use std::io::Write as IoWrite;
             // Gas grid is not MPI-decomposed in Option A — lives fully on all ranks (replicated).
             // This is consistent with the Option A design; Option B will fix this.
             let gas_path = format!("{dir}/gas_snapshot_{idx:04}.bin");
