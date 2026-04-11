@@ -39,7 +39,7 @@ pub fn cons_to_prim(u: &[f64; 5], gamma: f64) -> [f64; 5] {
 ///   ∂vy/∂t = −vx ∂vy/∂x
 ///   ∂vz/∂t = −vx ∂vz/∂x
 ///   ∂P/∂t  = −γP ∂vx/∂x − vx ∂P/∂x
-pub fn hancock_predict_x(w: &[f64; 5], dw: &[f64; 5], dt_half_over_dx: f64) -> [f64; 5] {
+pub fn hancock_predict_x(w: &[f64; 5], dw: &[f64; 5], dt_half_over_dx: f64, gamma: f64) -> [f64; 5] {
     let [rho, vx, vy, vz, p] = *w;
     let [drho, dvx, dvy, dvz, dp] = *dw;
     let c = dt_half_over_dx; // Δt/(2Δx)
@@ -48,7 +48,7 @@ pub fn hancock_predict_x(w: &[f64; 5], dw: &[f64; 5], dt_half_over_dx: f64) -> [
         vx  - c * (vx * dvx + dp / rho),
         vy  - c * (vx * dvy),
         vz  - c * (vx * dvz),
-        p   - c * (GAMMA * p * dvx + vx * dp),
+        p   - c * (gamma * p * dvx + vx * dp),
     ]
 }
 
@@ -110,8 +110,8 @@ pub fn sweep_x(
                 let ir = if i == n - 1 { 0 } else { i + 1 };
 
                 // Hancock half-step on left and right cells
-                let w_l = hancock_predict_x(&wc[i],  &slopes[i],  dt2dx);
-                let w_r = hancock_predict_x(&wc[ir], &slopes[ir], dt2dx);
+                let w_l = hancock_predict_x(&wc[i],  &slopes[i],  dt2dx, gamma);
+                let w_r = hancock_predict_x(&wc[ir], &slopes[ir], dt2dx, gamma);
 
                 // Right interface state of cell i: W_i + ½slope
                 // Left  interface state of cell ir: W_ir − ½slope
