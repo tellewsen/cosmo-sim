@@ -1,0 +1,40 @@
+# Symmetron C: β=2, a_SSB=0.5, λ₀=1 Mpc/h — Ellewsen, Falck & Mota (2018)
+
+[run]
+box_size       = 64.0
+n_grid         = 256
+levelmax       = 0
+refine_thr     = 99999
+a_init         = 0.02
+a_final        = 1.0
+dtau_max       = 0.002
+courant_factor = 0.5
+
+[cosmology]
+omega_m      = 0.3
+omega_lambda = 0.7
+omega_b      = 0.05
+h            = 0.67
+n_s          = 0.96
+sigma8       = 0.83
+
+[particles]
+n_part = 256
+m_part = 0.0
+
+[scalar_field]
+a_ssb      = 0.5
+lambda_0   = 1.0
+beta_0     = 2.0
+epsilon_mg = 1e-5
+non_static = false
+
+[hydro]
+cooling            = true
+star_formation     = true
+supernova_feedback = true
+
+[output]
+outdir   = "output_ellewsen_sym_c"
+n_output = 1
+a_out    = [1.0]

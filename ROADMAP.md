@@ -230,6 +230,14 @@ Comment updated: "grad_phi returns −∇χ; multiply by +β₀/a to get −(β�
 - [x] 128³ validation (64 Mpc/h, dx=0.5 Mpc/h=λ₀/2) — PASS, clear symmetron signal confirmed
 - [ ] 256³ run (128 Mpc/h, ISIS paper resolution) — pending desktop machine
 - [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison (needs HPC)
+- [ ] Hydro (Option A): domain-grid Godunov hydro (`--features hydro`) — Ellewsen et al. comparison
+  - [ ] Run all 5 Ellewsen configs (ΛCDM + Sym A/B/C/D), 256³ 64 Mpc/h
+  - [ ] Compare stacked halo profiles to Ellewsen et al. Figs 3–5
+
+#### Hydro Option B (preferred long-term)
+Gas fields embedded in AMR Cell struct with octree Godunov solver and AMR sub-cycling.
+This fully matches the RAMSES architecture. Implement after Option A validates the physics.
+See `docs/specs/2026-04-11-hydro-design.md`.
 
 #### Symmetron 128³ results (64 Mpc/h, dx=0.5 Mpc/h, seed=42)
 
