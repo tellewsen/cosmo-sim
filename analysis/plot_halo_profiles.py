@@ -133,7 +133,14 @@ def main():
     ]
     for ax, ylabel in zip(axes, ylabels):
         ax.set_xscale("log")
-        ax.set_yscale("log")
+        # Only use log y-scale if there are positive values to plot
+        lines = ax.get_lines()
+        has_positive = any_data and any(
+            np.any(np.isfinite(l.get_ydata()) & (np.array(l.get_ydata()) > 0))
+            for l in lines
+        )
+        if has_positive:
+            ax.set_yscale("log")
         ax.set_ylabel(ylabel, fontsize=13)
         ax.grid(True, which="both", ls=":", alpha=0.4)
         if any_data:
