@@ -424,6 +424,23 @@ impl Simulation {
                     }
                     self.star_particles.extend(new_stars);
                 }
+
+                if self.config.hydro.supernova_feedback {
+                    use crate::hydro::feedback::supernova_feedback;
+                    let n = self.config.run.n_grid as usize;
+                    let dx = self.config.run.box_size / n as Real;
+                    supernova_feedback(
+                        &mut self.star_particles,
+                        &mut self.scratch.gas_u,
+                        self.a,
+                        self.config.cosmology.h,
+                        self.config.hydro.eps_sn,
+                        self.config.hydro.t_sn_delay_myr,
+                        n,
+                        dx,
+                        self.config.run.box_size,
+                    );
+                }
             }
 
             // ── ½ Drift ────────────────────────────────────────────────────
