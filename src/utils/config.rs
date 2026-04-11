@@ -276,5 +276,10 @@ mod hydro_config_tests {
         assert!(!cfg.hydro.star_formation);
         assert!(!cfg.hydro.supernova_feedback);
         assert!((cfg.hydro.gamma - 5.0/3.0).abs() < 1e-10);
+        assert!((cfg.hydro.rho_sf_thresh - 0.1).abs() < 1e-10);
+        assert!((cfg.hydro.t_sf_thresh - 2.0e4).abs() < 1e-6);
+        assert!((cfg.hydro.eps_sf - 0.01).abs() < 1e-10);
+        assert!((cfg.hydro.eps_sn - 1.0e-5).abs() < 1e-10);
+        assert!((cfg.hydro.t_sn_delay_myr - 10.0).abs() < 1e-10);
     }
 }
