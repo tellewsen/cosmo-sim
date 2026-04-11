@@ -15,7 +15,7 @@ const C_KMS: Real = 299_792.458;
 /// A star particle is "mature" when (a_current - star.age_a) × t_hubble_myr > t_delay_myr.
 /// Mature particles deposit thermal energy into the surrounding 27 cells and are consumed.
 ///
-/// `t_hubble_myr` ≈ 977800 / h  Myr (Hubble time at z=0).
+/// `t_hubble_myr` ≈ 9778 / h  Myr (Hubble time at z=0; = 9.78/h Gyr).
 /// The delay uses Δa rather than proper time for simplicity.
 pub fn supernova_feedback(
     star_particles: &mut Vec<StarParticle>,
