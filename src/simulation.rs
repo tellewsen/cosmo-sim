@@ -653,6 +653,32 @@ impl Simulation {
         }
         log::info!("Snapshot {idx:04} written → {snap_path}  (a={:.5})", self.a);
 
+        // ── Gas snapshot ─────────────────────────────────────────────────
+        #[cfg(feature = "hydro")]
+        {
+            use std::io::Write as IoWrite;
+            // Gas grid is not MPI-decomposed in Option A — lives fully on all ranks (replicated).
+            // This is consistent with the Option A design; Option B will fix this.
+            let gas_path = format!("{dir}/gas_snapshot_{idx:04}.bin");
+            let mut gf = std::fs::File::create(&gas_path)
+                .expect("Cannot create gas snapshot file");
+            // Header: [step:u64][a:f64][n_cells:u64]
+            gf.write_all(&self.step.to_le_bytes()).unwrap();
+            gf.write_all(&self.a.to_le_bytes()).unwrap();
+            let n_grid = self.config.run.n_grid as usize;
+            let n3 = (n_grid * n_grid * n_grid) as u64;
+            gf.write_all(&n3.to_le_bytes()).unwrap();
+            // Per-cell: [rho:f64][vx:f64][vy:f64][vz:f64][u:f64]
+            for i in 0..n_grid.pow(3) {
+                gf.write_all(&self.scratch.gas_rho[i].to_le_bytes()).unwrap();
+                for d in 0..3 {
+                    gf.write_all(&self.scratch.gas_vel[i][d].to_le_bytes()).unwrap();
+                }
+                gf.write_all(&self.scratch.gas_u[i].to_le_bytes()).unwrap();
+            }
+            log::info!("Gas snapshot {idx:04} → {gas_path}");
+        }
+
         // ── Power spectrum ────────────────────────────────────────────────
         use crate::analysis::power_spectrum::compute_power_spectrum;
         let n_grid = self.config.run.n_grid as usize;
