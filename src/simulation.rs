@@ -75,6 +75,17 @@ impl SimScratch {
     }
 }
 
+#[cfg(feature = "hydro")]
+/// A star particle formed from collapsed gas via stochastic star formation.
+#[derive(Debug, Clone)]
+pub struct StarParticle {
+    pub pos:   [Real; 3],
+    pub vel:   [Real; 3],
+    pub mass:  Real,
+    /// Scale factor at formation.
+    pub age_a: Real,
+}
+
 #[cfg(feature = "symmetron")]
 use crate::scalar_field::symmetron::{fifth_force_grid, solve_symmetron, SymmetronParams};
 
@@ -103,6 +114,9 @@ pub struct Simulation {
     pub mpi_ctx: MpiContext,
     /// Pre-allocated scratch buffers reused across steps to avoid heap churn.
     pub scratch: SimScratch,
+    /// Star particles formed by stochastic star formation (hydro only).
+    #[cfg(feature = "hydro")]
+    pub star_particles: Vec<StarParticle>,
 }
 
 impl Simulation {
@@ -150,6 +164,8 @@ impl Simulation {
             particles,
             mpi_ctx,
             scratch,
+            #[cfg(feature = "hydro")]
+            star_particles: Vec::new(),
         }
     }
 
@@ -221,6 +237,26 @@ impl Simulation {
                 next_out,
                 self.a
             );
+        }
+
+        // ── Gas IC initialisation (hydro only) ───────────────────────────────
+        // One-shot CIC density assignment to get the initial DM density field,
+        // then initialise gas state from it.
+        #[cfg(feature = "hydro")]
+        {
+            use crate::hydro::ic::init_gas_from_dm;
+            self.particles.cic_density_into(&mut self.scratch.rho, n);
+            init_gas_from_dm(
+                &self.scratch.rho,
+                self.config.cosmology.omega_b,
+                self.config.cosmology.omega_m,
+                100.0, // T_init = 100 K cold start
+                &mut self.scratch.gas_rho,
+                &mut self.scratch.gas_vel,
+                &mut self.scratch.gas_u,
+            );
+            log::info!("Gas ICs initialised: omega_b/omega_m = {:.4}, T_init = 100 K",
+                self.config.cosmology.omega_b / self.config.cosmology.omega_m);
         }
 
         while self.a < a_final {
@@ -309,6 +345,33 @@ impl Simulation {
             // ── Kick ──────────────────────────────────────────────────────
             self.particles
                 .kick(&grav_part, fifth_part.as_deref(), self.dtau, self.a);
+
+            // ── Hydro step ────────────────────────────────────────────────
+            #[cfg(feature = "hydro")]
+            {
+                use crate::hydro::solver::{hydro_cfl, step as hydro_step};
+                let dt_hydro = hydro_cfl(
+                    &self.scratch.gas_rho,
+                    &self.scratch.gas_vel,
+                    &self.scratch.gas_u,
+                    dx,
+                    self.config.run.courant_factor,
+                    self.config.hydro.gamma,
+                );
+                let dt_use = self.dtau.min(dt_hydro);
+                let fifth = fifth_grid.as_deref();
+                hydro_step(
+                    &mut self.scratch.gas_rho,
+                    &mut self.scratch.gas_vel,
+                    &mut self.scratch.gas_u,
+                    &self.scratch.grav,
+                    fifth,
+                    dx,
+                    dt_use,
+                    n,
+                    self.config.hydro.gamma,
+                );
+            }
 
             // ── ½ Drift ────────────────────────────────────────────────────
             // Use a_half: x advances from τ+Δτ/2 to τ+Δτ, so the factor 1/a²
