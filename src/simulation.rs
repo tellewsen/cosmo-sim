@@ -382,6 +382,48 @@ impl Simulation {
                         self.config.cosmology.h,
                     );
                 }
+
+                if self.config.hydro.star_formation {
+                    use crate::hydro::star_formation::{form_stars, rho_sf_code};
+                    let dx = self.config.run.box_size / n as Real;
+                    let vol_cell = dx * dx * dx;
+                    let rho_bar = self.scratch.gas_rho.iter().copied().sum::<Real>()
+                        / self.scratch.gas_rho.len() as Real;
+                    let m_cell = rho_bar * vol_cell;
+                    let rho_sf = rho_sf_code(
+                        self.config.hydro.rho_sf_thresh,
+                        self.config.cosmology.omega_m,
+                        self.config.cosmology.h,
+                    );
+                    let cell_pos: Vec<[Real; 3]> = (0..n * n * n)
+                        .map(|flat| {
+                            let (ix, iy, iz) = crate::utils::types::from_flat(flat, n);
+                            [
+                                (ix as Real + 0.5) * dx,
+                                (iy as Real + 0.5) * dx,
+                                (iz as Real + 0.5) * dx,
+                            ]
+                        })
+                        .collect();
+                    let mut new_stars = form_stars(
+                        &mut self.scratch.gas_rho,
+                        &self.scratch.gas_vel,
+                        &self.scratch.gas_u,
+                        &cell_pos,
+                        m_cell,
+                        rho_sf,
+                        self.config.hydro.t_sf_thresh,
+                        self.config.hydro.eps_sf,
+                        dt_use,
+                        self.config.cosmology.omega_m,
+                        self.config.cosmology.h,
+                        self.step as u64,
+                    );
+                    for s in &mut new_stars {
+                        s.age_a = self.a;
+                    }
+                    self.star_particles.extend(new_stars);
+                }
             }
 
             // ── ½ Drift ────────────────────────────────────────────────────
