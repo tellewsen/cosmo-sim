@@ -323,12 +323,23 @@ impl Simulation {
             }
 
             // ── Output ────────────────────────────────────────────────────
-            // In MPI mode, only rank 0 writes snapshots.  A full gather of
-            // particles would be needed for the power spectrum; for now,
-            // every rank writes independently (to be improved with gather).
+            // All ranks participate in the gather (collective); only rank 0
+            // gets Some(...) and writes the snapshot + power spectrum.
             if next_out < out_times.len() && self.a >= out_times[next_out] {
-                if self.mpi_ctx.is_root() {
-                    self.write_snapshot(next_out);
+                let gathered = self.mpi_ctx.gather_particles_to_root(
+                    &self.particles.pos,
+                    &self.particles.vel,
+                );
+                if let Some((all_pos, all_vel)) = gathered {
+                    let n_total = all_pos.len();
+                    let mut all_parts = Particles::new(
+                        n_total,
+                        self.particles.mass,
+                        self.particles.box_size,
+                    );
+                    all_parts.pos = all_pos;
+                    all_parts.vel = all_vel;
+                    self.write_snapshot_from(next_out, &all_parts);
                 }
                 next_out += 1;
             }
@@ -466,11 +477,13 @@ impl Simulation {
 
     // ── Snapshot I/O ──────────────────────────────────────────────────────────
 
-    /// Write a binary snapshot **and** a companion power spectrum text file.
+    /// Write a binary snapshot and power spectrum using the provided particle set.
     ///
     /// Snapshot format: [step: u64][a: f64][n_part: u64] then for each particle [x,y,z,vx,vy,vz].
     /// Power spectrum: `power_spectrum_{idx:04}.txt`, space-separated k / P(k) / N_modes.
-    pub fn write_snapshot(&self, idx: usize) {
+    ///
+    /// In MPI runs this is called only on rank 0 with the gathered full particle set.
+    fn write_snapshot_from(&self, idx: usize, parts: &Particles) {
         use std::io::Write;
         let dir = &self.config.output.outdir;
         std::fs::create_dir_all(dir).expect("Cannot create output directory");
@@ -480,16 +493,14 @@ impl Simulation {
         let mut f = std::fs::File::create(&snap_path).expect("Cannot create snapshot file");
         f.write_all(&self.step.to_le_bytes()).unwrap();
         f.write_all(&self.a.to_le_bytes()).unwrap();
-        let np = self.particles.n as u64;
+        let np = parts.n as u64;
         f.write_all(&np.to_le_bytes()).unwrap();
-        for i in 0..self.particles.n {
+        for i in 0..parts.n {
             for d in 0..3 {
-                f.write_all(&self.particles.pos[i][d].to_le_bytes())
-                    .unwrap();
+                f.write_all(&parts.pos[i][d].to_le_bytes()).unwrap();
             }
             for d in 0..3 {
-                f.write_all(&self.particles.vel[i][d].to_le_bytes())
-                    .unwrap();
+                f.write_all(&parts.vel[i][d].to_le_bytes()).unwrap();
             }
         }
         log::info!("Snapshot {idx:04} written → {snap_path}  (a={:.5})", self.a);
@@ -498,7 +509,7 @@ impl Simulation {
         use crate::analysis::power_spectrum::compute_power_spectrum;
         let n_grid = self.config.run.n_grid as usize;
         let ps = compute_power_spectrum(
-            &self.particles,
+            parts,
             n_grid,
             self.a,
             self.step,
@@ -507,6 +518,11 @@ impl Simulation {
         );
         let pk_path = format!("{dir}/power_spectrum_{idx:04}.txt");
         ps.write(&pk_path);
+    }
+
+    /// Convenience wrapper for non-MPI single-rank output.
+    pub fn write_snapshot(&self, idx: usize) {
+        self.write_snapshot_from(idx, &self.particles);
     }
 
     /// Read back a snapshot (for restart).

@@ -373,6 +373,47 @@ impl MpiContext {
         Some(local.to_vec())
     }
 
+    /// Gather all particles from every rank onto rank 0.
+    ///
+    /// All ranks must call this (it is a collective operation).
+    /// Returns `Some((pos, vel))` on rank 0 with the full particle set,
+    /// `None` on all other ranks.
+    ///
+    /// Reuses `gather_to_root` by flattening pos+vel to a `Vec<Real>`
+    /// (6 f64 per particle: x,y,z,vx,vy,vz).
+    #[cfg(feature = "mpi")]
+    pub fn gather_particles_to_root(
+        &self,
+        pos: &[[Real; 3]],
+        vel: &[[Real; 3]],
+    ) -> Option<(Vec<[Real; 3]>, Vec<[Real; 3]>)> {
+        let mut flat = Vec::with_capacity(pos.len() * 6);
+        for i in 0..pos.len() {
+            flat.extend_from_slice(&pos[i]);
+            flat.extend_from_slice(&vel[i]);
+        }
+        self.gather_to_root(&flat).map(|gathered| {
+            let n = gathered.len() / 6;
+            let mut all_pos = Vec::with_capacity(n);
+            let mut all_vel = Vec::with_capacity(n);
+            for i in 0..n {
+                all_pos.push([gathered[i*6], gathered[i*6+1], gathered[i*6+2]]);
+                all_vel.push([gathered[i*6+3], gathered[i*6+4], gathered[i*6+5]]);
+            }
+            (all_pos, all_vel)
+        })
+    }
+
+    /// Non-MPI stub: single rank already has all particles.
+    #[cfg(not(feature = "mpi"))]
+    pub fn gather_particles_to_root(
+        &self,
+        pos: &[[Real; 3]],
+        vel: &[[Real; 3]],
+    ) -> Option<(Vec<[Real; 3]>, Vec<[Real; 3]>)> {
+        Some((pos.to_vec(), vel.to_vec()))
+    }
+
     /// Allreduce a vector element-wise (sum).
     ///
     /// Used for accumulating density grids across ranks when particles
@@ -688,6 +729,18 @@ mod tests {
         let result = ctx.gather_to_root(&data);
         assert!(result.is_some());
         assert_eq!(result.unwrap(), data);
+    }
+
+    #[test]
+    fn non_mpi_gather_particles_returns_copy() {
+        let ctx = MpiContext::init();
+        let pos = vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let vel = vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]];
+        let result = ctx.gather_particles_to_root(&pos, &vel);
+        assert!(result.is_some());
+        let (rpos, rvel) = result.unwrap();
+        assert_eq!(rpos, pos);
+        assert_eq!(rvel, vel);
     }
 
     #[test]
