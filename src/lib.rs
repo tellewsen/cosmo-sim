@@ -38,6 +38,9 @@ pub mod mpi;
 
 pub mod simulation;
 
+#[cfg(feature = "hydro")]
+pub mod hydro;
+
 // Top-level re-exports used by main.rs and integration tests
 pub use simulation::Simulation;
 pub use utils::config::example_config;

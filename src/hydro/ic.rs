@@ -1,0 +1,1 @@
+//! Gas initial conditions (stub).

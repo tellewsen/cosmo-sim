@@ -39,6 +39,7 @@ fofr        = []
 hdf5_output = ["hdf5"]
 fft_pm      = ["rustfft"]
 mpi_parallel = ["mpi"]
+hydro       = []
 
 [[bench]]
 name = "bench_gravity"

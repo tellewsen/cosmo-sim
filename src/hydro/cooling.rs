@@ -1,0 +1,1 @@
+//! Radiative cooling (stub).
