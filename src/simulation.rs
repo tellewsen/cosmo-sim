@@ -371,6 +371,17 @@ impl Simulation {
                     n,
                     self.config.hydro.gamma,
                 );
+
+                if self.config.hydro.cooling {
+                    use crate::hydro::cooling::cooling_step;
+                    cooling_step(
+                        &self.scratch.gas_rho,
+                        &mut self.scratch.gas_u,
+                        dt_use,
+                        self.config.cosmology.omega_m,
+                        self.config.cosmology.h,
+                    );
+                }
             }
 
             // ── ½ Drift ────────────────────────────────────────────────────
