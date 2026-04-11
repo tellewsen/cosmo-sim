@@ -386,10 +386,10 @@ impl Simulation {
                 if self.config.hydro.star_formation {
                     use crate::hydro::star_formation::{form_stars, rho_sf_code};
                     let dx = self.config.run.box_size / n as Real;
-                    let vol_cell = dx * dx * dx;
-                    let rho_bar = self.scratch.gas_rho.iter().copied().sum::<Real>()
-                        / self.scratch.gas_rho.len() as Real;
-                    let m_cell = rho_bar * vol_cell;
+                    // m_cell is the cell volume; form_stars multiplies by gas_rho[i]
+                    // internally to get the gas mass per cell, so we pass vol_cell
+                    // (not rho_bar * vol_cell, which would double-count the density).
+                    let m_cell = dx * dx * dx;
                     let rho_sf = rho_sf_code(
                         self.config.hydro.rho_sf_thresh,
                         self.config.cosmology.omega_m,
