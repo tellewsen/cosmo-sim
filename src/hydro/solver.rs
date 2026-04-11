@@ -5,6 +5,7 @@
 
 use crate::hydro::riemann::{hll_flux, minmod, pressure};
 
+#[allow(dead_code)] // used in tests
 const GAMMA: f64 = 5.0 / 3.0;
 
 // ── Primitive ↔ Conserved conversions ────────────────────────────────────────
@@ -152,6 +153,133 @@ pub fn sweep_x(
     }
 }
 
+// ── Axis-permuted sweeps ──────────────────────────────────────────────────────
+
+/// Transpose gas arrays to bring axis `ax` into the x-position,
+/// call sweep_x, then transpose back.
+pub fn sweep_axis(
+    gas_rho: &mut [f64],
+    gas_vel: &mut [[f64; 3]],
+    gas_u:   &mut [f64],
+    dx: f64,
+    dt: f64,
+    n:  usize,
+    gamma: f64,
+    ax: usize, // 0=x, 1=y, 2=z
+) {
+    if ax == 0 {
+        sweep_x(gas_rho, gas_vel, gas_u, dx, dt, n, gamma);
+        return;
+    }
+
+    let n3 = n * n * n;
+    let mut p_rho = vec![0.0f64; n3];
+    let mut p_vel = vec![[0.0f64; 3]; n3];
+    let mut p_u   = vec![0.0f64; n3];
+
+    // ax=1: permuted (a,b,c) → original (b,a,c)
+    // ax=2: permuted (a,b,c) → original (c,b,a)
+    for a in 0..n {
+        for b in 0..n {
+            for c in 0..n {
+                let p_idx = a * n * n + b * n + c;
+                let o_idx = match ax {
+                    1 => b * n * n + a * n + c,
+                    2 => c * n * n + b * n + a,
+                    _ => unreachable!(),
+                };
+                p_rho[p_idx] = gas_rho[o_idx];
+                p_u[p_idx]   = gas_u[o_idx];
+                p_vel[p_idx] = match ax {
+                    1 => [gas_vel[o_idx][1], gas_vel[o_idx][0], gas_vel[o_idx][2]],
+                    2 => [gas_vel[o_idx][2], gas_vel[o_idx][1], gas_vel[o_idx][0]],
+                    _ => unreachable!(),
+                };
+            }
+        }
+    }
+
+    sweep_x(&mut p_rho, &mut p_vel, &mut p_u, dx, dt, n, gamma);
+
+    // Permute back
+    for a in 0..n {
+        for b in 0..n {
+            for c in 0..n {
+                let p_idx = a * n * n + b * n + c;
+                let o_idx = match ax {
+                    1 => b * n * n + a * n + c,
+                    2 => c * n * n + b * n + a,
+                    _ => unreachable!(),
+                };
+                gas_rho[o_idx] = p_rho[p_idx];
+                gas_u[o_idx]   = p_u[p_idx];
+                gas_vel[o_idx] = match ax {
+                    1 => [p_vel[p_idx][1], p_vel[p_idx][0], p_vel[p_idx][2]],
+                    2 => [p_vel[p_idx][2], p_vel[p_idx][1], p_vel[p_idx][0]],
+                    _ => unreachable!(),
+                };
+            }
+        }
+    }
+}
+
+// ── CFL + full 3D step ────────────────────────────────────────────────────────
+
+/// Maximum stable hydro timestep: Δt = C_cfl × dx / max(|v| + c_s).
+pub fn hydro_cfl(gas_rho: &[f64], gas_vel: &[[f64; 3]], gas_u: &[f64],
+                 dx: f64, courant: f64, gamma: f64) -> f64 {
+    let v_max = gas_rho.iter().enumerate().map(|(i, &rho)| {
+        let p  = (gamma - 1.0) * rho * gas_u[i];
+        let cs = (gamma * p / rho.max(1e-30)).sqrt();
+        let v  = (gas_vel[i][0].powi(2) + gas_vel[i][1].powi(2) + gas_vel[i][2].powi(2)).sqrt();
+        v + cs
+    }).fold(0.0_f64, f64::max);
+    courant * dx / v_max.max(1e-10)
+}
+
+/// Full 3D hydro step: sweep x, then y, then z (Lie-Trotter splitting).
+///
+/// Also applies gravitational acceleration `grav` as a body-force source term
+/// (operator-split after the flux update).
+/// If `fifth_force` is `Some(...)`, it is added to the body force as well.
+pub fn step(
+    gas_rho: &mut [f64],
+    gas_vel: &mut [[f64; 3]],
+    gas_u:   &mut [f64],
+    grav:    &[[f64; 3]],
+    fifth_force: Option<&[[f64; 3]]>,
+    dx: f64,
+    dt: f64,
+    n:  usize,
+    gamma: f64,
+) {
+    sweep_axis(gas_rho, gas_vel, gas_u, dx, dt, n, gamma, 0);
+    sweep_axis(gas_rho, gas_vel, gas_u, dx, dt, n, gamma, 1);
+    sweep_axis(gas_rho, gas_vel, gas_u, dx, dt, n, gamma, 2);
+
+    // Gravity + fifth-force body force: operator-split kick on gas velocity and energy.
+    for idx in 0..gas_rho.len() {
+        let mut acc = grav[idx];
+        if let Some(ff) = fifth_force {
+            acc[0] += ff[idx][0];
+            acc[1] += ff[idx][1];
+            acc[2] += ff[idx][2];
+        }
+        let v_old = gas_vel[idx];
+        gas_vel[idx][0] += acc[0] * dt;
+        gas_vel[idx][1] += acc[1] * dt;
+        gas_vel[idx][2] += acc[2] * dt;
+        // ΔE = ρ v·a dt → Δu = v_mid·a dt
+        let v_mid = [
+            0.5 * (v_old[0] + gas_vel[idx][0]),
+            0.5 * (v_old[1] + gas_vel[idx][1]),
+            0.5 * (v_old[2] + gas_vel[idx][2]),
+        ];
+        gas_u[idx] += v_mid[0]*acc[0]*dt + v_mid[1]*acc[1]*dt + v_mid[2]*acc[2]*dt;
+        gas_u[idx] = gas_u[idx].max(1e-30);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,5 +317,30 @@ mod tests {
 
         assert!((mass_after - mass_before).abs() / mass_before < 1e-10,
             "mass not conserved: {mass_before} → {mass_after}");
+    }
+
+    #[test]
+    fn sweep_y_conserves_mass() {
+        let n = 8;
+        let n3 = n * n * n;
+        let mut rho: Vec<f64> = (0..n3).map(|i| 1.0 + 0.2 * ((i as f64).sin())).collect();
+        let mut vel = vec![[0.0f64, 0.1, 0.0]; n3];
+        let mut u   = vec![1.5f64; n3];
+        let mass_before: f64 = rho.iter().sum();
+        sweep_axis(&mut rho, &mut vel, &mut u, 1.0, 0.05, n, GAMMA, 1);
+        let mass_after: f64 = rho.iter().sum();
+        assert!((mass_after - mass_before).abs() / mass_before < 1e-10,
+            "mass not conserved in y: {mass_before} → {mass_after}");
+    }
+
+    #[test]
+    fn hydro_cfl_is_positive_and_finite() {
+        let n = 4;
+        let n3 = n * n * n;
+        let rho = vec![1.0f64; n3];
+        let vel = vec![[100.0f64, 0.0, 0.0]; n3];
+        let u   = vec![1.5f64; n3];
+        let dt = hydro_cfl(&rho, &vel, &u, 1.0, 0.8, GAMMA);
+        assert!(dt > 0.0 && dt.is_finite(), "dt={dt}");
     }
 }
