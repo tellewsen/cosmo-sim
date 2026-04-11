@@ -337,4 +337,69 @@ mod tests {
         let dt = hydro_cfl(&rho, &vel, &u, 1.0, 0.8, GAMMA);
         assert!(dt > 0.0 && dt.is_finite(), "dt={dt}");
     }
+
+    /// Sod shock tube: left (ρ=1, P=1) | right (ρ=0.125, P=0.1), γ=5/3.
+    ///
+    /// Uses an n×n×n grid with x-only initial conditions (y/z sweeps are
+    /// no-ops since there are no transverse gradients).  With periodic BCs
+    /// two counter-propagating shocks form: one at x=0.5 moving right, one
+    /// at the periodic boundary moving left.  By t=0.2 they have created a
+    /// compressed collision zone.
+    ///
+    /// Checks:
+    /// - mass conservation
+    /// - no negative or NaN densities
+    /// - compression above the right-state value (shock formed)
+    /// - peak density below the left-state (no unphysical gain)
+    /// - density field has structure (solver is not just diffusing)
+    #[test]
+    fn sod_shock_tube_density_jump() {
+        let n = 32;
+        let n3 = n * n * n;
+        let dx = 1.0 / n as f64;
+        let gamma = GAMMA;
+
+        let mut rho = vec![0.0f64; n3];
+        let mut vel = vec![[0.0f64; 3]; n3];
+        let mut u   = vec![0.0f64; n3];
+        let mut mass_init = 0.0f64;
+
+        for i in 0..n {
+            let (r, p) = if i < n / 2 { (1.0, 1.0) } else { (0.125, 0.1) };
+            let ui = p / ((gamma - 1.0) * r);
+            for j in 0..n {
+                for k in 0..n {
+                    let idx = i * n * n + j * n + k;
+                    rho[idx] = r;
+                    u[idx]   = ui;
+                    mass_init += r;
+                }
+            }
+        }
+
+        let grav = vec![[0.0f64; 3]; n3];
+        for _ in 0..200 {
+            step(&mut rho, &mut vel, &mut u, &grav, None, dx, 0.001, n, gamma);
+        }
+
+        let rho_max = rho.iter().cloned().fold(0.0_f64, f64::max);
+        let rho_min = rho.iter().cloned().fold(f64::INFINITY, f64::min);
+        let mass_final: f64 = rho.iter().sum();
+
+        // Mass conservation (periodic BC)
+        assert!((mass_final - mass_init).abs() / mass_init < 1e-8,
+            "mass not conserved: {mass_init:.6} → {mass_final:.6}");
+        // No NaN or negative density (stability)
+        assert!(rho_min > 0.0, "negative or zero density: min ρ = {rho_min:.6}");
+        // Shock must have compressed gas above the initial right state (0.125)
+        assert!(rho_max > 0.3,
+            "no significant compression: max ρ = {rho_max:.3}");
+        // No supraphysical density gain (both shocks compressing against each other
+        // can exceed single-shock post-density ≈0.43 but not the left-state 1.0)
+        assert!(rho_max < 1.05,
+            "supraphysical density: max ρ = {rho_max:.3}");
+        // Density field must retain structure (not fully diffused to mean ≈0.56)
+        assert!(rho_max - rho_min > 0.3,
+            "density too uniform: max={rho_max:.3}, min={rho_min:.3}");
+    }
 }
