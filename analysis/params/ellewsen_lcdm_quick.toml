@@ -1,0 +1,35 @@
+# Quick 64³ pipeline test — same physics as ellewsen_lcdm.toml at reduced resolution.
+# Use to validate the run → profiles → plot pipeline before committing to 256³ compute.
+# Particle mass ≈ 3.74e10 M_sun/h; halos in mass bins will be sparse but files are written.
+
+[run]
+box_size       = 64.0
+n_grid         = 64
+levelmax       = 0
+refine_thr     = 99999
+a_init         = 0.02
+a_final        = 1.0
+dtau_max       = 0.005
+courant_factor = 0.5
+
+[cosmology]
+omega_m      = 0.3
+omega_lambda = 0.7
+omega_b      = 0.05
+h            = 0.67
+n_s          = 0.96
+sigma8       = 0.83
+
+[particles]
+n_part = 64
+m_part = 0.0
+
+[hydro]
+cooling            = true
+star_formation     = true
+supernova_feedback = true
+
+[output]
+outdir   = "output_ellewsen_lcdm_quick"
+n_output = 1
+a_out    = [1.0]
