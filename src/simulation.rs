@@ -41,6 +41,15 @@ pub struct SimScratch {
     /// FFT column buffer for non-contiguous axis transforms (length n, fft_pm only)
     #[cfg(feature = "fft_pm")]
     pub fft_col: Vec<rustfft::num_complex::Complex<f64>>,
+    /// Gas density ρ_gas / ρ̄_matter (dimensionless). Mean ≈ Ω_b/Ω_m.
+    #[cfg(feature = "hydro")]
+    pub gas_rho: Vec<Real>,
+    /// Gas peculiar velocity [km/s].
+    #[cfg(feature = "hydro")]
+    pub gas_vel: Vec<[Real; 3]>,
+    /// Specific internal energy [km/s]².
+    #[cfg(feature = "hydro")]
+    pub gas_u: Vec<Real>,
 }
 
 impl SimScratch {
@@ -56,6 +65,12 @@ impl SimScratch {
             fft_buf: vec![rustfft::num_complex::Complex::new(0.0, 0.0); n3],
             #[cfg(feature = "fft_pm")]
             fft_col: vec![rustfft::num_complex::Complex::new(0.0, 0.0); n],
+            #[cfg(feature = "hydro")]
+            gas_rho: vec![0.0_f64; n3],
+            #[cfg(feature = "hydro")]
+            gas_vel: vec![[0.0_f64; 3]; n3],
+            #[cfg(feature = "hydro")]
+            gas_u: vec![0.0_f64; n3],
         }
     }
 }
