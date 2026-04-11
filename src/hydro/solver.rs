@@ -265,18 +265,12 @@ pub fn step(
             acc[1] += ff[idx][1];
             acc[2] += ff[idx][2];
         }
-        let v_old = gas_vel[idx];
+        // Gravity acts on kinetic energy only: Δv = a·dt.
+        // Internal energy u is unchanged — the work done by gravity (v·a·dt) goes
+        // entirely into ½|v|², so Δu = 0 for a gravity-only operator-split kick.
         gas_vel[idx][0] += acc[0] * dt;
         gas_vel[idx][1] += acc[1] * dt;
         gas_vel[idx][2] += acc[2] * dt;
-        // ΔE = ρ v·a dt → Δu = v_mid·a dt
-        let v_mid = [
-            0.5 * (v_old[0] + gas_vel[idx][0]),
-            0.5 * (v_old[1] + gas_vel[idx][1]),
-            0.5 * (v_old[2] + gas_vel[idx][2]),
-        ];
-        gas_u[idx] += v_mid[0]*acc[0]*dt + v_mid[1]*acc[1]*dt + v_mid[2]*acc[2]*dt;
-        gas_u[idx] = gas_u[idx].max(1e-30);
     }
 }
 
