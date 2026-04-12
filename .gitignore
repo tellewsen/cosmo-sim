@@ -1,4 +1,6 @@
 target/
+build/
+*.exe
 output_*/
 figs*/
 *.pdf
