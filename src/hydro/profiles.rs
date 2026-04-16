@@ -9,34 +9,120 @@ use crate::utils::types::Real;
 
 // ── FoF ──────────────────────────────────────────────────────────────────────
 
-/// Find FoF groups in the particle set.
+fn find(parent: &mut Vec<usize>, mut x: usize) -> usize {
+    while parent[x] != x {
+        parent[x] = parent[parent[x]]; // path compression
+        x = parent[x];
+    }
+    x
+}
+
+fn union(parent: &mut Vec<usize>, x: usize, y: usize) {
+    let rx = find(parent, x);
+    let ry = find(parent, y);
+    if rx != ry {
+        parent[rx] = ry;
+    }
+}
+
+/// Find FoF groups using a cell-list (O(N) average, O(N²) worst case for dense systems).
+///
+/// `b` is the linking length [Mpc/h]. `box_size` is the periodic box size [Mpc/h].
+/// Pair search includes periodic boundary wrapping.
 ///
 /// Returns a `Vec<Vec<usize>>` — each inner vec is the particle indices of one group.
-/// `b` is the linking length [Mpc/h].
-/// Uses union-find for efficiency (O(N α(N)) ≈ O(N)).
-pub fn friends_of_friends(pos: &[[Real; 3]], b: Real) -> Vec<Vec<usize>> {
+pub fn friends_of_friends(
+    pos:      &[[Real; 3]],
+    b:        Real,
+    box_size: Real,
+) -> Vec<Vec<usize>> {
     let n = pos.len();
+    if n == 0 {
+        return Vec::new();
+    }
     let mut parent: Vec<usize> = (0..n).collect();
 
-    fn find(parent: &mut Vec<usize>, mut x: usize) -> usize {
-        while parent[x] != x {
-            parent[x] = parent[parent[x]];
-            x = parent[x];
-        }
-        x
+    // Build cell grid with cell side ≥ b so that every pair within b is in
+    // adjacent (including diagonal) cells.
+    // Cap n_cells at N^(1/3) + 1 so the cell array never has more entries than
+    // particles (prevents O(N²) memory for tiny b relative to box_size).
+    // Reducing n_cells makes cell_size larger (≥ b) — correctness is preserved.
+    let n_cells_ideal = (box_size / b).floor() as usize;
+    let n_cells_cap   = (n as f64).cbrt().ceil() as usize + 1;
+    let n_cells = n_cells_ideal.min(n_cells_cap).max(1);
+    let cell_size = box_size / n_cells as Real;
+
+    let cell_flat = |p: [Real; 3]| -> usize {
+        let ci = ((p[0] / cell_size).floor() as isize).rem_euclid(n_cells as isize) as usize;
+        let cj = ((p[1] / cell_size).floor() as isize).rem_euclid(n_cells as isize) as usize;
+        let ck = ((p[2] / cell_size).floor() as isize).rem_euclid(n_cells as isize) as usize;
+        ci * n_cells * n_cells + cj * n_cells + ck
+    };
+
+    let cell_3d = |flat: usize| -> (usize, usize, usize) {
+        let ck = flat % n_cells;
+        let cj = (flat / n_cells) % n_cells;
+        let ci = flat / (n_cells * n_cells);
+        (ci, cj, ck)
+    };
+
+    // Assign particles to cells
+    let mut cells: Vec<Vec<usize>> = vec![Vec::new(); n_cells * n_cells * n_cells];
+    for i in 0..n {
+        cells[cell_flat(pos[i])].push(i);
     }
 
     let b2 = b * b;
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let dx = pos[i][0] - pos[j][0];
-            let dy = pos[i][1] - pos[j][1];
-            let dz = pos[i][2] - pos[j][2];
-            if dx * dx + dy * dy + dz * dz < b2 {
-                let ri = find(&mut parent, i);
-                let rj = find(&mut parent, j);
-                if ri != rj {
-                    parent[ri] = rj;
+
+    // Iterate over all cell pairs (ci_flat, ni_flat) with ni_flat >= ci_flat.
+    // For each pair, check all particle pairs between the two cells.
+    for ci_flat in 0..n_cells * n_cells * n_cells {
+        if cells[ci_flat].is_empty() {
+            continue;
+        }
+        let (ci, cj, ck) = cell_3d(ci_flat);
+
+        for di in 0..3usize {
+            for dj in 0..3usize {
+                for dk in 0..3usize {
+                    let ni = (ci + di + n_cells - 1) % n_cells;
+                    let nj = (cj + dj + n_cells - 1) % n_cells;
+                    let nk = (ck + dk + n_cells - 1) % n_cells;
+                    let ni_flat = ni * n_cells * n_cells + nj * n_cells + nk;
+
+                    // Process each cell pair only once
+                    if ni_flat < ci_flat {
+                        continue;
+                    }
+
+                    for &i in &cells[ci_flat] {
+                        let start = if ni_flat == ci_flat {
+                            // Within the same cell: only pairs with j > i
+                            cells[ci_flat].iter().position(|&x| x == i).unwrap() + 1
+                        } else {
+                            0
+                        };
+
+                        for &j in &cells[ni_flat][start..] {
+                            // Periodic minimum-image distance
+                            let mut dx = pos[i][0] - pos[j][0];
+                            if dx.abs() > box_size * 0.5 {
+                                dx -= dx.signum() * box_size;
+                            }
+                            let mut dy = pos[i][1] - pos[j][1];
+                            if dy.abs() > box_size * 0.5 {
+                                dy -= dy.signum() * box_size;
+                            }
+                            let mut dz = pos[i][2] - pos[j][2];
+                            if dz.abs() > box_size * 0.5 {
+                                dz -= dz.signum() * box_size;
+                            }
+
+                            if dx * dx + dy * dy + dz * dz < b2 {
+                                union(&mut parent, i, j);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -62,11 +148,11 @@ pub fn group_centre(pos: &[[Real; 3]], members: &[usize]) -> [Real; 3] {
     [c[0] / n, c[1] / n, c[2] / n]
 }
 
-/// R_200: radius enclosing mean density = 200 × ρ_crit.
+/// R_200: radius enclosing mean density = 200 × ρ_crit at z=0.
 ///
-/// ρ_crit ≈ 1.246e11 M_sun/(Mpc/h)³ for h=0.67 (hardcoded; pass as param in future).
-pub fn r200(n_members: usize, m_part: Real, _omega_m: Real) -> Real {
-    let rho_crit = 1.246e11_f64; // M_sun/(Mpc/h)³ for h=0.67
+/// ρ_crit(z=0) = 2.775×10¹¹ h² M_sun/(Mpc/h)³  (standard formula).
+pub fn r200(n_members: usize, m_part: Real, h: Real) -> Real {
+    let rho_crit = 2.775e11 * h * h; // M_sun/(Mpc/h)³
     let m_halo = n_members as Real * m_part;
     (3.0 * m_halo / (4.0 * std::f64::consts::PI * 200.0 * rho_crit)).powf(1.0 / 3.0)
 }
@@ -89,16 +175,19 @@ pub fn stacked_profiles(
     box_size: Real,
     m_part:   Real,
     omega_m:  Real,
+    h:        Real,
     m_min:    Real,
     m_max:    Real,
     groups:   &[Vec<usize>],
 ) -> ([Real; N_BINS], [Real; N_BINS], [Real; N_BINS], [Real; N_BINS], [usize; N_BINS], usize) {
+    let _ = omega_m; // retained for potential future use (e.g. z-dependent ρ_crit)
     let dx = box_size / n_grid as Real;
     debug_assert_eq!(gas_rho.len(), n_grid * n_grid * n_grid, "gas_rho length mismatch");
     debug_assert_eq!(gas_u.len(),   n_grid * n_grid * n_grid, "gas_u length mismatch");
 
-    // Temperature from u: T = u / (k_B / (μ m_p))
-    let u_to_t = 1.0 / (0.008314 / 0.59);
+    // T [K] = (μ m_p / k_B) × u [km/s]²
+    // k_B = 8.314e-3 (km/s)²/K × m_p,  μ = 0.59
+    let u_to_t = 0.59 / 8.314e-3; // K / (km/s)²
 
     // Log-spaced bin edges
     let log_rmin = R_MIN_FRAC.ln();
@@ -119,16 +208,20 @@ pub fn stacked_profiles(
         n_halos += 1;
 
         let centre = group_centre(dm_pos, group);
-        let r200_h = r200(group.len(), m_part, omega_m);
+        let r200_h = r200(group.len(), m_part, h);
 
         // DM: count particles in each radial bin
         let mut dm_bin_counts = [0usize; N_BINS];
         for &i in group {
-            let dr = [
+            let mut dr = [
                 dm_pos[i][0] - centre[0],
                 dm_pos[i][1] - centre[1],
                 dm_pos[i][2] - centre[2],
             ];
+            // Periodic wrapping
+            for d in &mut dr {
+                if d.abs() > box_size * 0.5 { *d -= d.signum() * box_size; }
+            }
             let r = (dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]).sqrt() / r200_h;
             if r < R_MIN_FRAC || r >= R_MAX_FRAC {
                 continue;
@@ -157,11 +250,14 @@ pub fn stacked_profiles(
                         (cj as Real + 0.5) * dx,
                         (ck as Real + 0.5) * dx,
                     ];
-                    let dr = [
+                    let mut dr = [
                         cell_pos[0] - centre[0],
                         cell_pos[1] - centre[1],
                         cell_pos[2] - centre[2],
                     ];
+                    for d in &mut dr {
+                        if d.abs() > box_size * 0.5 { *d -= d.signum() * box_size; }
+                    }
                     let r =
                         (dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]).sqrt() / r200_h;
                     if r < R_MIN_FRAC || r >= R_MAX_FRAC {
@@ -195,7 +291,7 @@ pub fn stacked_profiles(
             rho_gas[bin] = rho_gas_sum[bin] / counts[bin] as Real;
             t_mean[bin] = t_sum[bin] / counts[bin] as Real;
         }
-        // DM: average particle count per bin across halos (not normalised by gas cell count)
+        // DM: average particle count per bin across halos
         rho_dm[bin] = rho_dm_sum[bin] / n_halos.max(1) as Real;
     }
 
@@ -240,16 +336,42 @@ mod tests {
         }
         pos.push([100.0, 0.0, 0.0]); // isolated
 
-        let groups = friends_of_friends(&pos, 0.05);
+        let groups = friends_of_friends(&pos, 0.05, 200.0);
         let sizes: Vec<usize> = groups.iter().map(|g| g.len()).collect();
         assert!(sizes.contains(&8), "did not find cluster of 8: {sizes:?}");
         assert!(sizes.contains(&1), "did not find isolated particle: {sizes:?}");
     }
 
     #[test]
+    fn fof_links_across_periodic_boundary() {
+        // Two particles on opposite sides of the box that should be linked periodically
+        let pos = vec![
+            [0.1f64, 0.0, 0.0],   // near left edge
+            [99.9f64, 0.0, 0.0],  // near right edge → distance = 0.2 < b=0.5
+        ];
+        let groups = friends_of_friends(&pos, 0.5, 100.0);
+        assert_eq!(groups.len(), 1, "particles across boundary should be linked");
+        assert_eq!(groups[0].len(), 2);
+    }
+
+    #[test]
+    fn fof_no_particles() {
+        let groups = friends_of_friends(&[], 0.2, 64.0);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
     fn r200_increases_with_mass() {
-        let r1 = r200(100, 1e8, 0.3);
-        let r2 = r200(1000, 1e8, 0.3);
+        let r1 = r200(100, 1e8, 0.67);
+        let r2 = r200(1000, 1e8, 0.67);
         assert!(r2 > r1, "r200 should increase with particle count");
+    }
+
+    #[test]
+    fn r200_depends_on_h() {
+        // Higher h → higher ρ_crit → smaller R_200 for same mass
+        let r_lo = r200(1000, 1e10, 0.7);
+        let r_hi = r200(1000, 1e10, 0.67);
+        assert!(r_lo < r_hi, "R_200 should decrease with increasing h");
     }
 }

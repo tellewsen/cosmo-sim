@@ -702,13 +702,14 @@ impl Simulation {
             let box_size = self.config.run.box_size;
             // Linking length: b = 0.2 × mean inter-particle spacing = 0.2 × L / n_part^(1/3)
             let b        = 0.2 * box_size / (self.config.particles.n_part as Real).cbrt();
-            let groups   = friends_of_friends(&parts.pos, b);
+            let groups   = friends_of_friends(&parts.pos, b, box_size);
+            let h        = self.config.cosmology.h;
 
             // High mass: M > 10^13.5 M_sun/h
             let (r, rg, t, rd, ct, nh) = stacked_profiles(
                 &parts.pos, &self.scratch.gas_rho, &self.scratch.gas_u,
                 n_grid, box_size, parts.mass,
-                self.config.cosmology.omega_m,
+                self.config.cosmology.omega_m, h,
                 10.0_f64.powf(13.5), Real::MAX, &groups,
             );
             write_profiles(
@@ -720,7 +721,7 @@ impl Simulation {
             let (r, rg, t, rd, ct, nh) = stacked_profiles(
                 &parts.pos, &self.scratch.gas_rho, &self.scratch.gas_u,
                 n_grid, box_size, parts.mass,
-                self.config.cosmology.omega_m,
+                self.config.cosmology.omega_m, h,
                 0.0, 10.0_f64.powf(12.0), &groups,
             );
             write_profiles(
