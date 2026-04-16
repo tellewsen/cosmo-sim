@@ -15,8 +15,8 @@ EXE_SUFFIX  = $(if $(filter %-windows-%,$(TARGET)),.exe,)
 , := ,
 
 define build
-	CARGO_TARGET_DIR=build/$(1) cargo build --release --features $(2) $(TARGET_FLAG)
-	@printf '\e[32m→ build/%s/release/cosmo_sim%s\e[0m\n' '$(1)' '$(EXE_SUFFIX)'
+	CARGO_TARGET_DIR=build/$(1) cargo build --profile dist --features $(2) $(TARGET_FLAG)
+	@printf '\e[32m→ build/%s/dist/cosmo_sim%s\e[0m\n' '$(1)' '$(EXE_SUFFIX)'
 endef
 
 .PHONY: hydro hydro-sym hydro-fofr hydro-sym-fofr hydro-mpi hydro-sym-mpi test clean

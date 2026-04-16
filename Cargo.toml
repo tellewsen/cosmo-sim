@@ -55,6 +55,14 @@ lto           = "fat"
 codegen-units = 1
 panic         = "abort"
 
+# Leaner build profile for day-to-day development builds alongside running sims.
+# Thin LTO peaks at ~2–3 GB vs 8–12 GB for fat LTO — safe in WSL2 (15 GB ceiling).
+# Nearly identical runtime performance. Use: make hydro  (Makefile uses this profile)
+[profile.dist]
+inherits      = "release"
+lto           = "thin"
+codegen-units = 4
+
 [profile.dev]
 opt-level = 1
 
