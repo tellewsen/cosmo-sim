@@ -297,7 +297,7 @@ Added `src/mpi/mod.rs` with the `mpi_parallel` cargo feature (depends on `mpi` c
 - [x] Distributed multigrid for f(R) scalar field solver — `solve_fofr_mpi` mirrors symmetron MPI solver; `fofr_ngs_sweep_slab`, `fofr_residual_slab`, `v_cycle_fofr_mpi` added; dispatched in `simulation.rs` under `mpi_parallel` feature
 - [x] Multi-rank integration test — `tests/mpi_ghost_exchange.rs` (harness=false); run via `make test-mpi` (mpirun -np 2); verifies ghost density exchange is correct across rank boundaries
 - [x] Particle gather to rank 0 for snapshot/power spectrum output — `gather_particles_to_root` in `mpi/mod.rs`, wired in simulation loop output block
-- [ ] Load balancing for AMR (currently assumes uniform grid)
+- [ ] Load balancing for AMR — **someday**: requires AMR V-cycle solver (prolongation/restriction) to be wired into the physics loop first; SFC (Hilbert-curve) oct partitioning only becomes useful once refined cells are actually solved on
 
 **TODO (performance):**
 - [x] Pre-allocate simulation scratch buffers (density, source, phi, grav_grid, FFT arrays)
