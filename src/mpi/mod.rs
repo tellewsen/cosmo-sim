@@ -414,10 +414,77 @@ impl MpiContext {
         Some((pos.to_vec(), vel.to_vec()))
     }
 
+    /// Exchange density ghost contributions with neighbouring ranks.
+    ///
+    /// After per-rank CIC, each rank's `rho` (full N³ C-order array) contains
+    /// only contributions from its own particles.  Due to the 2-cell CIC stencil,
+    /// particles near a slab boundary deposit 1 cell into the adjacent slab.
+    /// This method performs two O(N²) nearest-neighbour exchanges so that each
+    /// rank's local slab `rho[i_lo*n²..i_hi*n²]` becomes fully correct.
+    ///
+    /// Replaces `allreduce_sum_vec` (O(N³) all-to-all) with O(N²) per rank.
+    /// After the call only the local slab is correct; cells outside it retain
+    /// the partial (single-rank) deposits and should not be read.
+    ///
+    /// `n` is the global grid side length (cubic grid assumed).
+    #[cfg(feature = "mpi")]
+    pub fn reduce_ghost_density(&self, rho: &mut [Real], n: usize) {
+        if self.size == 1 {
+            return; // Single MPI rank: CIC already wrote the complete density.
+        }
+
+        use ::mpi::traits::Communicator;
+        use ::mpi::point_to_point as p2p;
+
+        let universe = unsafe {
+            &*(&self._universe as *const ::mpi::environment::Universe)
+        };
+        let world = universe.world();
+
+        let i_lo = self.slab_start(n);
+        let i_hi = self.slab_end(n);
+        let n2 = n * n;
+
+        let left_rank  = if self.rank == 0 { self.size - 1 } else { self.rank - 1 };
+        let right_rank = if self.rank == self.size - 1 { 0 } else { self.rank + 1 };
+        let left_proc  = world.process_at_rank(left_rank  as i32);
+        let right_proc = world.process_at_rank(right_rank as i32);
+
+        // Left ghost: rank r's CIC deposit into cell (i_lo − 1) mod n.
+        let left_ghost = (i_lo + n - 1) % n;
+        let send_left  = rho[left_ghost * n2..(left_ghost + 1) * n2].to_vec();
+
+        // Right ghost: rank r's CIC deposit into cell i_hi mod n.
+        let right_ghost = i_hi % n;
+        let send_right  = rho[right_ghost * n2..(right_ghost + 1) * n2].to_vec();
+
+        // Exchange 1: send left spillover to left neighbour;
+        //             receive right neighbour's left spillover → add to our right boundary cell.
+        // Right neighbour's left spillover lands in cell (i_lo_{r+1} − 1) = i_hi − 1.
+        let mut recv_from_right = vec![0.0_f64; n2];
+        p2p::send_receive_into(&send_left[..], &left_proc, &mut recv_from_right[..], &right_proc);
+        let right_boundary = i_hi - 1; // always valid: i_hi ≥ 1
+        for j in 0..n2 {
+            rho[right_boundary * n2 + j] += recv_from_right[j];
+        }
+
+        // Exchange 2: send right spillover to right neighbour;
+        //             receive left neighbour's right spillover → add to our left boundary cell.
+        // Left neighbour's right spillover lands in cell i_hi_{r-1} = i_lo.
+        let mut recv_from_left = vec![0.0_f64; n2];
+        p2p::send_receive_into(&send_right[..], &right_proc, &mut recv_from_left[..], &left_proc);
+        for j in 0..n2 {
+            rho[i_lo * n2 + j] += recv_from_left[j];
+        }
+    }
+
+    /// No-op stub: single rank already holds complete density after CIC.
+    #[cfg(not(feature = "mpi"))]
+    pub fn reduce_ghost_density(&self, _rho: &mut [Real], _n: usize) {}
+
     /// Allreduce a vector element-wise (sum).
     ///
-    /// Used for accumulating density grids across ranks when particles
-    /// deposit across slab boundaries.
+    /// Retained for use cases other than density (e.g. diagnostic sums).
     #[cfg(feature = "mpi")]
     pub fn allreduce_sum_vec(&self, local: &[Real]) -> Vec<Real> {
         use ::mpi::collective::{CommunicatorCollectives, SystemOperation};

@@ -298,13 +298,14 @@ impl Simulation {
             // ── Density assignment (into scratch.rho) ──────────────────────
             self.particles.cic_density_into(&mut self.scratch.rho, n);
 
-            // In distributed mode, particles near slab edges deposit into
-            // ghost cells that must be summed across ranks.
+            // In distributed mode, particles near slab boundaries deposit 1 cell
+            // into the adjacent slab.  Exchange these O(N²) ghost contributions
+            // with neighbours so that the local slab [i_lo, i_hi) is correct.
+            // After this call, scratch.rho outside the local slab is stale but
+            // is never read in MPI mode (Poisson and scalar-field solvers use
+            // only the local slab slice).
             #[cfg(feature = "mpi_parallel")]
-            {
-                let reduced = self.mpi_ctx.allreduce_sum_vec(&self.scratch.rho);
-                self.scratch.rho.copy_from_slice(&reduced);
-            }
+            self.mpi_ctx.reduce_ghost_density(&mut self.scratch.rho, n);
 
             self.grid.set_domain_rho(&self.scratch.rho);
 
