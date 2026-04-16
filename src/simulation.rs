@@ -50,6 +50,15 @@ pub struct SimScratch {
     /// Specific internal energy [km/s]².
     #[cfg(feature = "hydro")]
     pub gas_u: Vec<Real>,
+    /// Permuted gas density scratch for axis sweeps (avoids per-step allocation).
+    #[cfg(feature = "hydro")]
+    pub gas_rho_perm: Vec<Real>,
+    /// Permuted gas velocity scratch for axis sweeps.
+    #[cfg(feature = "hydro")]
+    pub gas_vel_perm: Vec<[Real; 3]>,
+    /// Permuted gas internal energy scratch for axis sweeps.
+    #[cfg(feature = "hydro")]
+    pub gas_u_perm: Vec<Real>,
 }
 
 impl SimScratch {
@@ -71,6 +80,12 @@ impl SimScratch {
             gas_vel: vec![[0.0_f64; 3]; n3],
             #[cfg(feature = "hydro")]
             gas_u: vec![0.0_f64; n3],
+            #[cfg(feature = "hydro")]
+            gas_rho_perm: vec![0.0_f64; n3],
+            #[cfg(feature = "hydro")]
+            gas_vel_perm: vec![[0.0_f64; 3]; n3],
+            #[cfg(feature = "hydro")]
+            gas_u_perm: vec![0.0_f64; n3],
         }
     }
 }
@@ -370,6 +385,9 @@ impl Simulation {
                     dt_use,
                     n,
                     self.config.hydro.gamma,
+                    &mut self.scratch.gas_rho_perm,
+                    &mut self.scratch.gas_vel_perm,
+                    &mut self.scratch.gas_u_perm,
                 );
 
                 if self.config.hydro.cooling {

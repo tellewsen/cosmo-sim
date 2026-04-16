@@ -166,16 +166,14 @@ pub fn sweep_axis(
     n:  usize,
     gamma: f64,
     ax: usize, // 0=x, 1=y, 2=z
+    p_rho: &mut [f64],
+    p_vel: &mut [[f64; 3]],
+    p_u:   &mut [f64],
 ) {
     if ax == 0 {
         sweep_x(gas_rho, gas_vel, gas_u, dx, dt, n, gamma);
         return;
     }
-
-    let n3 = n * n * n;
-    let mut p_rho = vec![0.0f64; n3];
-    let mut p_vel = vec![[0.0f64; 3]; n3];
-    let mut p_u   = vec![0.0f64; n3];
 
     // ax=1: permuted (a,b,c) → original (b,a,c)
     // ax=2: permuted (a,b,c) → original (c,b,a)
@@ -199,7 +197,7 @@ pub fn sweep_axis(
         }
     }
 
-    sweep_x(&mut p_rho, &mut p_vel, &mut p_u, dx, dt, n, gamma);
+    sweep_x(p_rho, p_vel, p_u, dx, dt, n, gamma);
 
     // Permute back
     for a in 0..n {
@@ -252,10 +250,13 @@ pub fn step(
     dt: f64,
     n:  usize,
     gamma: f64,
+    p_rho: &mut [f64],
+    p_vel: &mut [[f64; 3]],
+    p_u:   &mut [f64],
 ) {
-    sweep_axis(gas_rho, gas_vel, gas_u, dx, dt, n, gamma, 0);
-    sweep_axis(gas_rho, gas_vel, gas_u, dx, dt, n, gamma, 1);
-    sweep_axis(gas_rho, gas_vel, gas_u, dx, dt, n, gamma, 2);
+    sweep_axis(gas_rho, gas_vel, gas_u, dx, dt, n, gamma, 0, p_rho, p_vel, p_u);
+    sweep_axis(gas_rho, gas_vel, gas_u, dx, dt, n, gamma, 1, p_rho, p_vel, p_u);
+    sweep_axis(gas_rho, gas_vel, gas_u, dx, dt, n, gamma, 2, p_rho, p_vel, p_u);
 
     // Gravity + fifth-force body force: operator-split kick on gas velocity and energy.
     for idx in 0..gas_rho.len() {
@@ -321,7 +322,10 @@ mod tests {
         let mut vel = vec![[0.0f64, 0.1, 0.0]; n3];
         let mut u   = vec![1.5f64; n3];
         let mass_before: f64 = rho.iter().sum();
-        sweep_axis(&mut rho, &mut vel, &mut u, 1.0, 0.05, n, GAMMA, 1);
+        let mut p_rho = vec![0.0f64; n3];
+        let mut p_vel = vec![[0.0f64; 3]; n3];
+        let mut p_u   = vec![0.0f64; n3];
+        sweep_axis(&mut rho, &mut vel, &mut u, 1.0, 0.05, n, GAMMA, 1, &mut p_rho, &mut p_vel, &mut p_u);
         let mass_after: f64 = rho.iter().sum();
         assert!((mass_after - mass_before).abs() / mass_before < 1e-10,
             "mass not conserved in y: {mass_before} → {mass_after}");
@@ -378,8 +382,12 @@ mod tests {
         }
 
         let grav = vec![[0.0f64; 3]; n3];
+        let mut p_rho = vec![0.0f64; n3];
+        let mut p_vel = vec![[0.0f64; 3]; n3];
+        let mut p_u   = vec![0.0f64; n3];
         for _ in 0..200 {
-            step(&mut rho, &mut vel, &mut u, &grav, None, dx, 0.001, n, gamma);
+            step(&mut rho, &mut vel, &mut u, &grav, None, dx, 0.001, n, gamma,
+                 &mut p_rho, &mut p_vel, &mut p_u);
         }
 
         let rho_max = rho.iter().cloned().fold(0.0_f64, f64::max);
