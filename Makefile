@@ -19,7 +19,7 @@ define build
 	@printf '\e[32m→ build/%s/dist/cosmo_sim%s\e[0m\n' '$(1)' '$(EXE_SUFFIX)'
 endef
 
-.PHONY: hydro hydro-sym hydro-fofr hydro-sym-fofr hydro-mpi hydro-sym-mpi test clean
+.PHONY: hydro hydro-sym hydro-fofr hydro-sym-fofr hydro-mpi hydro-sym-mpi test test-mpi clean
 
 hydro:
 	$(call build,hydro,hydro)
@@ -42,5 +42,15 @@ hydro-sym-mpi:
 test:
 	cargo test --features hydro$(,)symmetron$(,)fofr
 
+# Multi-rank MPI integration test: builds the harness=false test binary and
+# runs it under mpirun -np 2.  Requires OpenMPI or MPICH to be installed.
+test-mpi:
+	cargo test --features mpi_parallel --test mpi_ghost_exchange --no-run 2>&1
+	@BIN=$$(ls -t target/debug/deps/mpi_ghost_exchange-* 2>/dev/null | head -1); \
+	if [ -z "$$BIN" ]; then echo "ERROR: test binary not found" >&2; exit 1; fi; \
+	echo "Running: mpirun -np 2 $$BIN"; \
+	mpirun -np 2 $$BIN
+
 clean:
+	rm -rf build/
 	rm -rf build/

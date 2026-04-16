@@ -295,7 +295,7 @@ Added `src/mpi/mod.rs` with the `mpi_parallel` cargo feature (depends on `mpi` c
   - Only local slab [i_lo, i_hi) is correct after exchange; sufficient for Poisson and scalar-field solvers
 - [x] Distributed multigrid for Symmetron scalar field solver (on local slabs)
 - [x] Distributed multigrid for f(R) scalar field solver — `solve_fofr_mpi` mirrors symmetron MPI solver; `fofr_ngs_sweep_slab`, `fofr_residual_slab`, `v_cycle_fofr_mpi` added; dispatched in `simulation.rs` under `mpi_parallel` feature
-- [ ] Multi-rank integration test (requires MPI runtime in CI)
+- [x] Multi-rank integration test — `tests/mpi_ghost_exchange.rs` (harness=false); run via `make test-mpi` (mpirun -np 2); verifies ghost density exchange is correct across rank boundaries
 - [x] Particle gather to rank 0 for snapshot/power spectrum output — `gather_particles_to_root` in `mpi/mod.rs`, wired in simulation loop output block
 - [ ] Load balancing for AMR (currently assumes uniform grid)
 

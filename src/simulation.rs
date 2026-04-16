@@ -70,7 +70,10 @@ impl SimScratch {
     /// `box_size` is needed to pre-compute cell centre positions.
     pub fn new(n: usize, box_size: Real) -> Self {
         let n3 = n * n * n;
+        #[cfg(feature = "hydro")]
         let dx = box_size / n as Real;
+        #[cfg(not(feature = "hydro"))]
+        let _ = box_size;
         #[cfg(feature = "hydro")]
         let cell_pos: Vec<[Real; 3]> = (0..n3)
             .map(|flat| {

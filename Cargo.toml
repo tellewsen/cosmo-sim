@@ -41,6 +41,11 @@ fft_pm      = ["rustfft"]
 mpi_parallel = ["mpi"]
 hydro       = []
 
+[[test]]
+name    = "mpi_ghost_exchange"
+path    = "tests/mpi_ghost_exchange.rs"
+harness = false
+
 [[bench]]
 name = "bench_gravity"
 harness = false
