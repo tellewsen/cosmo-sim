@@ -867,4 +867,32 @@ mod tests {
             assert_eq!(ctx.transpose_j_to_i(&data, n).len(), n * n * n);
         }
     }
+
+    // ── Ghost density exchange tests ─────────────────────────────────────────
+
+    /// Single-rank: reduce_ghost_density must not change any values (no-op).
+    #[test]
+    fn reduce_ghost_density_single_rank_noop() {
+        let ctx = MpiContext::init();
+        let n = 4;
+        let data: Vec<Real> = (0..n * n * n).map(|i| (i + 1) as Real).collect();
+        let mut rho = data.clone();
+        ctx.reduce_ghost_density(&mut rho, n);
+        assert_eq!(rho, data, "single-rank ghost exchange must not change rho");
+    }
+
+    /// Single-rank: density sum is conserved across the exchange.
+    #[test]
+    fn reduce_ghost_density_preserves_sum() {
+        let ctx = MpiContext::init();
+        let n = 8;
+        let mut rho: Vec<Real> = (0..n * n * n).map(|i| (i as Real).sin().abs()).collect();
+        let sum_before: Real = rho.iter().sum();
+        ctx.reduce_ghost_density(&mut rho, n);
+        let sum_after: Real = rho.iter().sum();
+        assert!(
+            (sum_after - sum_before).abs() < 1e-10 * sum_before.abs(),
+            "single-rank exchange must not change total density: {sum_before} → {sum_after}"
+        );
+    }
 }
