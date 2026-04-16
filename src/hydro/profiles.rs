@@ -95,13 +95,10 @@ pub fn friends_of_friends(
                         continue;
                     }
 
-                    for &i in &cells[ci_flat] {
-                        let start = if ni_flat == ci_flat {
-                            // Within the same cell: only pairs with j > i
-                            cells[ci_flat].iter().position(|&x| x == i).unwrap() + 1
-                        } else {
-                            0
-                        };
+                    for (pos_in_cell, &i) in cells[ci_flat].iter().enumerate() {
+                        // Within the same cell: start after i's position to avoid
+                        // duplicate pairs.  For adjacent cells: start from 0.
+                        let start = if ni_flat == ci_flat { pos_in_cell + 1 } else { 0 };
 
                         for &j in &cells[ni_flat][start..] {
                             // Periodic minimum-image distance

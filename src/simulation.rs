@@ -59,12 +59,25 @@ pub struct SimScratch {
     /// Permuted gas internal energy scratch for axis sweeps.
     #[cfg(feature = "hydro")]
     pub gas_u_perm: Vec<Real>,
+    /// Pre-computed cell centre positions [Mpc/h] for star formation.
+    /// Stored once at init to avoid O(N³) allocation every step.
+    #[cfg(feature = "hydro")]
+    pub cell_pos: Vec<[Real; 3]>,
 }
 
 impl SimScratch {
     /// Allocate all scratch buffers for an n^3 grid.
-    pub fn new(n: usize) -> Self {
+    /// `box_size` is needed to pre-compute cell centre positions.
+    pub fn new(n: usize, box_size: Real) -> Self {
         let n3 = n * n * n;
+        let dx = box_size / n as Real;
+        #[cfg(feature = "hydro")]
+        let cell_pos: Vec<[Real; 3]> = (0..n3)
+            .map(|flat| {
+                let (ix, iy, iz) = crate::utils::types::from_flat(flat, n);
+                [(ix as Real + 0.5) * dx, (iy as Real + 0.5) * dx, (iz as Real + 0.5) * dx]
+            })
+            .collect();
         Self {
             rho:    vec![0.0_f64; n3],
             source: vec![0.0_f64; n3],
@@ -86,6 +99,8 @@ impl SimScratch {
             gas_vel_perm: vec![[0.0_f64; 3]; n3],
             #[cfg(feature = "hydro")]
             gas_u_perm: vec![0.0_f64; n3],
+            #[cfg(feature = "hydro")]
+            cell_pos,
         }
     }
 }
@@ -166,7 +181,7 @@ impl Simulation {
         let particles = Particles::new(n3_part, m_part, box_size);
 
         let n3_grid = n * n * n;
-        let scratch = SimScratch::new(n);
+        let scratch = SimScratch::new(n, box_size);
         Self {
             a: config.run.a_init,
             dtau: config.run.dtau_max * 0.01,
@@ -414,21 +429,11 @@ impl Simulation {
                         self.config.cosmology.omega_m,
                         self.config.cosmology.h,
                     );
-                    let cell_pos: Vec<[Real; 3]> = (0..n * n * n)
-                        .map(|flat| {
-                            let (ix, iy, iz) = crate::utils::types::from_flat(flat, n);
-                            [
-                                (ix as Real + 0.5) * dx,
-                                (iy as Real + 0.5) * dx,
-                                (iz as Real + 0.5) * dx,
-                            ]
-                        })
-                        .collect();
                     let mut new_stars = form_stars(
                         &mut self.scratch.gas_rho,
                         &self.scratch.gas_vel,
                         &self.scratch.gas_u,
-                        &cell_pos,
+                        &self.scratch.cell_pos,
                         m_cell,
                         rho_sf,
                         self.config.hydro.t_sf_thresh,
