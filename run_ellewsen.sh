@@ -16,23 +16,38 @@
 #   [ ] Sym D 256³    — bash run_ellewsen.sh sym_d
 #   [ ] Plot           — bash run_ellewsen.sh plot
 #
-# Prerequisites (WSL2):
+# Prerequisites:
 #   uv  (curl -LsSf https://astral.sh/uv/install.sh | sh)
+#        or on Windows: winget install astral-sh.uv
+#
+# On Windows run this script from Git Bash.
 
 set -e
 
-RELEASE_BASE="https://github.com/tellewsen/rustis/releases/download/v0.2.0"
-BIN_HYDRO="cosmo_sim-hydro-linux-x86_64"
-BIN_HYDRO_SYM="cosmo_sim-hydro-sym-linux-x86_64"
+RELEASE_BASE="https://github.com/tellewsen/rustis/releases/download/v0.2.1"
+
+# Detect platform: native Windows (Git Bash/MSYS2) vs Linux/WSL2
+case "$(uname -s)" in
+  MINGW*|CYGWIN*|MSYS*)
+    BIN_HYDRO="cosmo_sim-hydro-windows-x86_64.exe"
+    BIN_HYDRO_SYM="cosmo_sim-hydro-sym-windows-x86_64.exe"
+    ;;
+  *)
+    BIN_HYDRO="cosmo_sim-hydro-linux-x86_64"
+    BIN_HYDRO_SYM="cosmo_sim-hydro-sym-linux-x86_64"
+    ;;
+esac
 
 setup() {
-  if [[ ! -x "./$BIN_HYDRO" ]]; then
+  if [[ ! -f "./$BIN_HYDRO" ]]; then
     echo "Downloading $BIN_HYDRO..."
-    curl -L "$RELEASE_BASE/$BIN_HYDRO" -o "$BIN_HYDRO" && chmod +x "$BIN_HYDRO"
+    curl -L "$RELEASE_BASE/$BIN_HYDRO" -o "$BIN_HYDRO"
+    chmod +x "$BIN_HYDRO" 2>/dev/null || true
   fi
-  if [[ ! -x "./$BIN_HYDRO_SYM" ]]; then
+  if [[ ! -f "./$BIN_HYDRO_SYM" ]]; then
     echo "Downloading $BIN_HYDRO_SYM..."
-    curl -L "$RELEASE_BASE/$BIN_HYDRO_SYM" -o "$BIN_HYDRO_SYM" && chmod +x "$BIN_HYDRO_SYM"
+    curl -L "$RELEASE_BASE/$BIN_HYDRO_SYM" -o "$BIN_HYDRO_SYM"
+    chmod +x "$BIN_HYDRO_SYM" 2>/dev/null || true
   fi
   if [[ ! -d analysis/params ]]; then
     echo "Downloading param files..."
