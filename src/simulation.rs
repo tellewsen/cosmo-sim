@@ -694,34 +694,34 @@ impl Simulation {
                 .with_data(&[self.config.run.box_size])
                 .create("box_size_mpc_h").unwrap();
 
-            // DM group
+            // DM group  (row-major flat layout: [n_part × 3])
             let dm = file.create_group("dm").unwrap();
             let n = parts.n;
             let pos_flat: Vec<f64> = parts.pos.iter()
                 .flat_map(|p| p.iter().copied()).collect();
             let vel_flat: Vec<f64> = parts.vel.iter()
                 .flat_map(|v| v.iter().copied()).collect();
-            let pos2d = ndarray::Array::from_shape_vec((n, 3), pos_flat).unwrap();
-            let vel2d = ndarray::Array::from_shape_vec((n, 3), vel_flat).unwrap();
-            dm.new_dataset_builder().with_data(&pos2d).create("pos").unwrap();
-            dm.new_dataset_builder().with_data(&vel2d).create("vel").unwrap();
+            dm.new_dataset::<f64>().shape([n, 3]).create("pos").unwrap()
+                .write_raw(&pos_flat).unwrap();
+            dm.new_dataset::<f64>().shape([n, 3]).create("vel").unwrap()
+                .write_raw(&vel_flat).unwrap();
             dm.new_attr_builder().with_data(&[n as u64]).create("n_part").unwrap();
             dm.new_attr_builder().with_data(&[parts.mass]).create("mass_msun_h").unwrap();
 
-            // Gas group
+            // Gas group  (rho/u: [n³], vel: [n³ × 3])
             #[cfg(feature = "hydro")]
             {
                 let n_grid = self.config.run.n_grid as usize;
                 let n3 = n_grid * n_grid * n_grid;
                 let gas = file.create_group("gas").unwrap();
-                let rho = ndarray::aview1(&self.scratch.gas_rho[..n3]);
-                let u   = ndarray::aview1(&self.scratch.gas_u[..n3]);
                 let vel_flat: Vec<f64> = self.scratch.gas_vel[..n3]
                     .iter().flat_map(|v| v.iter().copied()).collect();
-                let vel2d = ndarray::Array::from_shape_vec((n3, 3), vel_flat).unwrap();
-                gas.new_dataset_builder().with_data(&rho).create("rho").unwrap();
-                gas.new_dataset_builder().with_data(&vel2d).create("vel").unwrap();
-                gas.new_dataset_builder().with_data(&u).create("u").unwrap();
+                gas.new_dataset::<f64>().shape([n3]).create("rho").unwrap()
+                    .write_raw(&self.scratch.gas_rho[..n3]).unwrap();
+                gas.new_dataset::<f64>().shape([n3]).create("u").unwrap()
+                    .write_raw(&self.scratch.gas_u[..n3]).unwrap();
+                gas.new_dataset::<f64>().shape([n3, 3]).create("vel").unwrap()
+                    .write_raw(&vel_flat).unwrap();
                 gas.new_attr_builder()
                     .with_data(&[n_grid as u64]).create("n_grid").unwrap();
                 gas.new_attr_builder()
