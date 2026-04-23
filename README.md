@@ -26,6 +26,7 @@ The goal is **Fortran-competitive performance** via:
 | **f(R) gravity** (Hu-Sawicki) | Nonlinear Newton-GS multigrid; distributed FAS (`mpi_parallel`) | Llinares et al. 2014 (ISIS) |
 | AMR refinement | Graded octree | Teyssier 2002 (RAMSES) |
 | Background cosmology | flat ΛCDM | Planck 2018 defaults |
+| **Gas hydrodynamics** (`hydro`) | MUSCL-Hancock Godunov + HLL Riemann; operator-split cooling, SF, SN feedback | Teyssier 2002; Ellewsen et al. 2018 |
 
 ---
 
@@ -62,14 +63,31 @@ cargo build --release --features symmetron
 # With f(R) gravity
 cargo build --release --features fofr
 
-# Both
+# Both scalar fields
 cargo build --release --features symmetron,fofr
+
+# Eulerian gas hydrodynamics (Ellewsen et al. baryonic physics)
+cargo build --release --features hydro
+
+# Hydro + Symmetron (for Ellewsen et al. comparison runs)
+cargo build --release --features hydro,symmetron
 
 # MPI multi-node (requires libopenmpi-dev + clang)
 cargo build --release --features mpi_parallel
 
-# MPI + f(R)
-cargo build --release --features mpi_parallel,fofr
+# MPI + hydro + Symmetron
+cargo build --release --features mpi_parallel,hydro,symmetron
+```
+
+The `dist` profile (thin LTO, avoids OOM on memory-constrained systems) is available via the `Makefile`:
+
+```bash
+make hydro        # → build/hydro/dist/cosmo_sim
+make hydro-sym    # → build/hydro-sym/dist/cosmo_sim
+make hydro-fofr
+make hydro-sym-fofr
+make hydro-mpi
+make hydro-sym-mpi
 ```
 
 ### Run
@@ -137,6 +155,14 @@ beta_0     = 1.0   # Coupling strength
 non_static = false # Set true for Llinares & Mota 2014 non-static run
 epsilon_mg = 1e-5
 
+[hydro]                    # Requires --features hydro
+cooling            = true  # Radiative cooling (primordial H/He)
+star_formation     = true  # Stochastic Schmidt SF
+supernova_feedback = true  # Thermal SN feedback
+# gamma          = 1.6667  # Adiabatic index (default 5/3)
+# rho_sf_thresh  = 0.1     # SF density threshold [H/cm³]
+# t_sf_thresh    = 2.0e4   # SF temperature threshold [K]
+
 [output]
 outdir   = "output"
 n_output = 10
@@ -151,15 +177,23 @@ hdf5     = false
 src/
 ├── main.rs                 CLI entry point (clap)
 ├── lib.rs                  Module declarations & re-exports
-├── simulation.rs           Top-level run loop (DKD + Poisson + scalar field)
+├── simulation.rs           Top-level run loop (DKD + Poisson + scalar field + hydro)
 ├── utils/
 │   ├── types.rs            Real, Vec3, shared constants
 │   ├── cosmology.rs        ΛCDM background, supercomoving time
-│   └── config.rs           TOML parameter file
+│   └── config.rs           TOML parameter file (HydroParams added)
 ├── amr/
 │   └── grid.rs             Octree AMR: cells, octs, refinement
 ├── gravity/
 │   └── poisson.rs          V-cycle multigrid Poisson solver (serial + distributed FFT-PM)
+├── hydro/                  Gas hydrodynamics (--features hydro)
+│   ├── riemann.rs          HLL Riemann solver, MinMod slope limiter
+│   ├── solver.rs           MUSCL-Hancock Godunov sweep (3D, operator-split gravity)
+│   ├── ic.rs               Gas IC from DM density field; T↔u conversions
+│   ├── cooling.rs          Radiative cooling (primordial H/He two-power-law)
+│   ├── star_formation.rs   Stochastic Schmidt SF; StarParticle
+│   ├── feedback.rs         Supernova thermal feedback (27-cell kernel)
+│   └── profiles.rs         FoF halo finder + stacked gas/DM radial profiles
 ├── mpi/
 │   └── mod.rs              Slab decomposition, halo exchange, particle migration, reductions
 ├── particles/
@@ -203,3 +237,4 @@ Scalar field solvers (Symmetron, f(R)) use distributed FAS multigrid on local sl
 - Hu, W. & Sawicki, I. (2007). *Phys. Rev. D* 76, 064004. [f(R)]
 - Martel, H. & Shapiro, P. R. (1998). *ApJ* 495, 521. [Supercomoving time]
 - Guillet, T. & Teyssier, R. (2011). *J. Comput. Phys.* 230, 4756. [Multigrid Poisson]
+- Ellewsen, J., Falck, B., & Mota, D. F. (2018). *A&A* 615, A134. [arXiv:1803.04197] [Hydro+Symmetron halos]
