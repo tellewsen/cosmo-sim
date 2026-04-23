@@ -9,7 +9,7 @@
 #   bash run_ellewsen.sh quick      # 64³ pipeline sanity check (~minutes)
 #
 # Status:
-#   [x] ΛCDM 256³     — done on dev machine (output_ellewsen_lcdm/)
+#   [ ] ΛCDM 256³     — bash run_ellewsen.sh lcdm  (re-run: now saves 5 epochs)
 #   [x] Sym A 256³    — done on dev machine (output_ellewsen_sym_a/)
 #   [ ] Sym B 256³    — bash run_ellewsen.sh sym_b
 #   [ ] Sym C 256³    — bash run_ellewsen.sh sym_c
@@ -68,6 +68,10 @@ run() {
 CMD="${1:-}"
 
 case "$CMD" in
+  lcdm)
+    setup
+    run "$BIN_HYDRO" "analysis/params/ellewsen_lcdm.toml" "ΛCDM (256³, 5 epochs)"
+    ;;
   sym_b)
     setup
     run "$BIN_HYDRO_SYM" "analysis/params/ellewsen_sym_b.toml" "Symmetron B (a_SSB=0.33, β=1, λ₀=1) — 256³"
@@ -122,7 +126,7 @@ case "$CMD" in
     uv run python analysis/extract_profiles.py --snapdir output_ellewsen_lcdm_quick
     ;;
   *)
-    echo "Usage: bash run_ellewsen.sh <sym_b|sym_c|sym_d|plot|quick>"
+    echo "Usage: bash run_ellewsen.sh <lcdm|sym_b|sym_c|sym_d|plot|quick>"
     echo ""
     grep "^#" "$0" | head -20
     exit 1

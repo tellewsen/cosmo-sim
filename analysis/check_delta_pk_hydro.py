@@ -2,9 +2,9 @@
 """ΔP/P comparison for Ellewsen et al. hydro runs.
 
 Compares power spectra from Symmetron variants (Sym A/B/C/D) against the
-ΛCDM hydro baseline. The ΛCDM run has a single snapshot at z=0; the Sym
-runs have five epochs (a=0.298, 0.479, 0.646, 0.817, 1.0). All Sym epochs
-are compared against the ΛCDM z=0 baseline.
+ΛCDM hydro baseline. Both runs output at a=0.298, 0.479, 0.646, 0.817, 1.0.
+Each Sym snapshot is matched to the ΛCDM snapshot at the nearest scale factor
+(tolerance 0.05); unmatched snapshots are skipped with a warning.
 
 Usage
 -----
@@ -47,16 +47,23 @@ def find_pk_files(directory):
     return files
 
 
-def load_lcdm_z0(lcdm_dir):
-    """Load the ΛCDM z=0 power spectrum (last file, verified to be a≈1)."""
+def load_lcdm_catalog(lcdm_dir):
+    """Load all ΛCDM power spectrum snapshots, keyed by scale factor."""
     files = find_pk_files(lcdm_dir)
-    # Take the file with the largest a value
-    best = max(files, key=parse_a)
-    a = parse_a(best)
-    if abs(a - 1.0) > 0.05:
-        print(f"WARNING: ΛCDM baseline a={a:.4f} (expected ≈1.0), using anyway")
-    k, p, n = load_pk(best)
-    return k, p, n, a
+    catalog = {}  # a -> (k, p, n_modes)
+    for f in files:
+        a = parse_a(f)
+        catalog[a] = load_pk(f)
+    return catalog
+
+
+def match_lcdm(catalog, a_sym, tol=0.05):
+    """Find the ΛCDM snapshot closest in scale factor to a_sym."""
+    best_a = min(catalog, key=lambda a: abs(a - a_sym))
+    if abs(best_a - a_sym) > tol:
+        return None, None, None, best_a
+    k, p, n = catalog[best_a]
+    return k, p, n, best_a
 
 
 def print_table(label, a_sym, z_sym, k, p_lcdm, p_sym, nk):
@@ -96,10 +103,13 @@ def main():
 
     labels = args.labels or [os.path.basename(d.rstrip("/")) for d in args.sym]
 
-    # Load ΛCDM baseline
-    k_lcdm, p_lcdm, n_lcdm, a_lcdm = load_lcdm_z0(args.lcdm)
-    print(f"ΛCDM baseline: {args.lcdm}  (a={a_lcdm:.4f}, z=0)")
-    print(f"{len(k_lcdm)} k bins, k = [{k_lcdm[0]:.4f}, {k_lcdm[-1]:.4f}] h/Mpc")
+    # Load ΛCDM catalog (all epochs)
+    lcdm_catalog = load_lcdm_catalog(args.lcdm)
+    a_lcdm_vals = sorted(lcdm_catalog)
+    print(f"ΛCDM: {args.lcdm}  ({len(lcdm_catalog)} snapshots: "
+          f"a={[f'{a:.3f}' for a in a_lcdm_vals]})")
+    k_sample, p_sample, _ = lcdm_catalog[a_lcdm_vals[0]]
+    print(f"{len(k_sample)} k bins, k = [{k_sample[0]:.4f}, {k_sample[-1]:.4f}] h/Mpc")
     print()
 
     for sym_dir, label in zip(args.sym, labels):
@@ -116,9 +126,18 @@ def main():
             z_sym = 1.0 / a_sym - 1.0
             k_sym, p_sym, _ = load_pk(path)
 
+            k_lcdm, p_lcdm, _, a_matched = match_lcdm(lcdm_catalog, a_sym)
+            if k_lcdm is None:
+                print(f"  WARNING: no ΛCDM snapshot near a={a_sym:.4f} "
+                      f"(closest a={a_matched:.4f}), skipping")
+                continue
+
             if not np.allclose(k_sym, k_lcdm, rtol=1e-3):
                 print(f"  WARNING: k-bin mismatch at a={a_sym:.4f}, skipping")
                 continue
+
+            if abs(a_matched - a_sym) > 1e-3:
+                print(f"  (using ΛCDM a={a_matched:.4f} for Sym a={a_sym:.4f})")
 
             print_table(label, a_sym, z_sym, k_lcdm, p_lcdm, p_sym, args.nk)
 

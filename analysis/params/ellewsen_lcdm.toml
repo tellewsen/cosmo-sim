@@ -30,5 +30,5 @@ supernova_feedback = true
 
 [output]
 outdir   = "output_ellewsen_lcdm"
-n_output = 1
-a_out    = [1.0]
+n_output = 5
+a_out    = [0.298, 0.479, 0.646, 0.817, 1.0]
