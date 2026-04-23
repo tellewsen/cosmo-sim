@@ -79,6 +79,22 @@ case "$CMD" in
         DIRS+=("$d"); LABELS+=("$l")
       fi
     done
+    # ΔP/P comparison
+    SYM_DIRS=(); SYM_LABELS=()
+    for pair in \
+      "output_ellewsen_sym_a:Sym A" \
+      "output_ellewsen_sym_b:Sym B" \
+      "output_ellewsen_sym_c:Sym C" \
+      "output_ellewsen_sym_d:Sym D"; do
+      d="${pair%%:*}"; l="${pair##*:}"
+      [[ -d "$d" ]] && SYM_DIRS+=("$d") && SYM_LABELS+=("$l")
+    done
+    if [[ -d output_ellewsen_lcdm && ${#SYM_DIRS[@]} -gt 0 ]]; then
+      uv run python analysis/check_delta_pk_hydro.py \
+        --lcdm output_ellewsen_lcdm \
+        --sym "${SYM_DIRS[@]}" --labels "${SYM_LABELS[@]}"
+    fi
+
     mkdir -p figures
     uv run python analysis/plot_halo_profiles.py \
       --dirs "${DIRS[@]}" --labels "${LABELS[@]}" \
