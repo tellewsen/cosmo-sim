@@ -205,6 +205,31 @@ src/
 
 ---
 
+## Reproducing Ellewsen et al. (2018)
+
+Pre-built Linux binaries are attached to each GitHub release. To run the five
+Ellewsen configurations (ΛCDM + Symmetron A/B/C/D) without compiling from source:
+
+```bash
+git clone git@github.com:tellewsen/rustis.git && cd rustis
+
+# Quick sanity check first (64³, ~minutes):
+bash run_ellewsen.sh quick
+
+# Then run each 256³ production sim one at a time (~hours each):
+bash run_ellewsen.sh sym_b
+bash run_ellewsen.sh sym_c
+bash run_ellewsen.sh sym_d
+
+# Once all sims are done, extract profiles and plot:
+bash run_ellewsen.sh plot
+```
+
+The script downloads the correct binary from the release automatically.
+`uv` is required for the Python post-processing step (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
+
+---
+
 ## Initial conditions
 
 Generate with [MUSIC](https://github.com/cosmo-sims/music) (C++, 2LPT) or
