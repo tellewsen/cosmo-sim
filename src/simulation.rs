@@ -680,6 +680,57 @@ impl Simulation {
         }
         log::info!("Snapshot {idx:04} written → {snap_path}  (a={:.5})", self.a);
 
+        // ── HDF5 snapshot (DM + gas) ──────────────────────────────────────
+        #[cfg(feature = "hdf5_output")]
+        if self.config.output.hdf5 {
+            let h5_path = format!("{dir}/snapshot_{idx:04}.h5");
+            let file = ::hdf5::File::create(&h5_path)
+                .expect("Cannot create HDF5 snapshot file");
+
+            // Root attributes
+            file.new_attr_builder().with_data(&[self.a]).create("a").unwrap();
+            file.new_attr_builder().with_data(&[self.step as u64]).create("step").unwrap();
+            file.new_attr_builder()
+                .with_data(&[self.config.run.box_size])
+                .create("box_size_mpc_h").unwrap();
+
+            // DM group
+            let dm = file.create_group("dm").unwrap();
+            let n = parts.n;
+            let pos_flat: Vec<f64> = parts.pos.iter()
+                .flat_map(|p| p.iter().copied()).collect();
+            let vel_flat: Vec<f64> = parts.vel.iter()
+                .flat_map(|v| v.iter().copied()).collect();
+            let pos2d = ndarray::Array::from_shape_vec((n, 3), pos_flat).unwrap();
+            let vel2d = ndarray::Array::from_shape_vec((n, 3), vel_flat).unwrap();
+            dm.new_dataset_builder().with_data(&pos2d).create("pos").unwrap();
+            dm.new_dataset_builder().with_data(&vel2d).create("vel").unwrap();
+            dm.new_attr_builder().with_data(&[n as u64]).create("n_part").unwrap();
+            dm.new_attr_builder().with_data(&[parts.mass]).create("mass_msun_h").unwrap();
+
+            // Gas group
+            #[cfg(feature = "hydro")]
+            {
+                let n_grid = self.config.run.n_grid as usize;
+                let n3 = n_grid * n_grid * n_grid;
+                let gas = file.create_group("gas").unwrap();
+                let rho = ndarray::aview1(&self.scratch.gas_rho[..n3]);
+                let u   = ndarray::aview1(&self.scratch.gas_u[..n3]);
+                let vel_flat: Vec<f64> = self.scratch.gas_vel[..n3]
+                    .iter().flat_map(|v| v.iter().copied()).collect();
+                let vel2d = ndarray::Array::from_shape_vec((n3, 3), vel_flat).unwrap();
+                gas.new_dataset_builder().with_data(&rho).create("rho").unwrap();
+                gas.new_dataset_builder().with_data(&vel2d).create("vel").unwrap();
+                gas.new_dataset_builder().with_data(&u).create("u").unwrap();
+                gas.new_attr_builder()
+                    .with_data(&[n_grid as u64]).create("n_grid").unwrap();
+                gas.new_attr_builder()
+                    .with_data(&[self.config.hydro.gamma]).create("gamma").unwrap();
+            }
+
+            log::info!("HDF5 snapshot {idx:04} → {h5_path}");
+        }
+
         // ── Gas snapshot ─────────────────────────────────────────────────
         #[cfg(feature = "hydro")]
         {

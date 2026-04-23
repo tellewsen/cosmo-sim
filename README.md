@@ -40,6 +40,9 @@ For the `mpi_parallel` feature, you also need:
 - An MPI implementation with dev headers (`libopenmpi-dev` or `mpich`)
 - `clang` (used by bindgen to generate MPI bindings)
 
+For the `hdf5_output` feature, you also need:
+- The HDF5 C library (`libhdf5-dev` on Debian/Ubuntu, `hdf5-devel` on Fedora)
+
 ```bash
 # Ubuntu/Debian
 sudo apt-get install libopenmpi-dev clang
@@ -166,7 +169,7 @@ supernova_feedback = true  # Thermal SN feedback
 [output]
 outdir   = "output"
 n_output = 10
-hdf5     = false
+hdf5     = false   # set true + build with --features hdf5_output to write .h5 files
 ```
 
 ---
