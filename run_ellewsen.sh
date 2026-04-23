@@ -62,13 +62,11 @@ if [[ $QUICK -eq 1 ]]; then
   run "$BIN_HYDRO" "analysis/params/ellewsen_lcdm_quick.toml" "ΛCDM quick (64³)"
 else
   # ── Production runs (256³, ~hours each) ───────────────────────────────────
-  # Run ΛCDM first; its output is the baseline for the ΔP/P and profile comparisons.
+  # ΛCDM and Sym A were completed on the dev machine (2026-04-13 and 2026-04-16).
+  # Only B, C, D remain.
 
-  # [ ] ΛCDM 256³
-  run "$BIN_HYDRO" "analysis/params/ellewsen_lcdm.toml" "ΛCDM (256³)"
-
-  # [ ] Symmetron A — a_SSB=0.5, β=1, λ₀=1
-  run "$BIN_HYDRO_SYM" "analysis/params/ellewsen_sym_a.toml" "Symmetron A (256³)"
+  # [x] ΛCDM 256³          — DONE (output_ellewsen_lcdm/)
+  # [x] Symmetron A        — DONE (output_ellewsen_sym_a/)
 
   # [ ] Symmetron B — a_SSB=0.33, β=1, λ₀=1
   run "$BIN_HYDRO_SYM" "analysis/params/ellewsen_sym_b.toml" "Symmetron B (256³)"
@@ -99,10 +97,20 @@ else
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "  Post-processing: plot halo profiles"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  # Only pass dirs that actually exist (ΛCDM/Sym A may be missing on the desktop)
+  DIRS=(); LABELS=()
+  for pair in \
+    "output_ellewsen_lcdm:ΛCDM" \
+    "output_ellewsen_sym_a:Sym A" \
+    "output_ellewsen_sym_b:Sym B" \
+    "output_ellewsen_sym_c:Sym C" \
+    "output_ellewsen_sym_d:Sym D"; do
+    d="${pair%%:*}"; l="${pair##*:}"
+    [[ -d "$d" ]] && DIRS+=("$d") && LABELS+=("$l")
+  done
+  mkdir -p figures
   uv run python analysis/plot_halo_profiles.py \
-    --dirs output_ellewsen_lcdm output_ellewsen_sym_a output_ellewsen_sym_b \
-           output_ellewsen_sym_c output_ellewsen_sym_d \
-    --labels "ΛCDM" "Sym A" "Sym B" "Sym C" "Sym D" \
+    --dirs "${DIRS[@]}" --labels "${LABELS[@]}" \
     --out figures/ellewsen_profiles.pdf
 fi
 
