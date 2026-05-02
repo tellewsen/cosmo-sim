@@ -228,11 +228,19 @@ Comment updated: "grad_phi returns −∇χ; multiply by +β₀/a to get −(β�
 - [x] Re-run symmetron 64 Mpc/h after sign fix; verify ΔP/P > 0 — PASS
 - [x] MPI support for cluster-scale runs — IMPLEMENTED (see below)
 - [x] 128³ validation (64 Mpc/h, dx=0.5 Mpc/h=λ₀/2) — PASS, clear symmetron signal confirmed
+- [x] Hydro (Option A): domain-grid Godunov hydro (`--features hydro`) — IMPLEMENTED
+  - MUSCL-Hancock Godunov solver (3D, gravity body force, CFL), HLL Riemann, MinMod limiter
+  - Radiative cooling (primordial H/He), stochastic SF (Schmidt-Katz), SNe thermal feedback
+  - FoF halo finder + stacked profile output; HDF5 gas snapshot writer
+  - `ellewsen_lcdm.toml` / `sym_a/b/c/d.toml` param files; `run_ellewsen.sh` driver
+  - Reference profile infrastructure: `analysis/reference/` CSVs + `--reference-dir` overlay in plotter
+- [x] GitHub Actions CI/CD — `.github/workflows/ci.yml` (fmt + clippy + test ×3) and
+  `release.yml` (builds `cosmo_sim-hydro-linux-x86_64` + `cosmo_sim-hydro-sym-linux-x86_64`
+  on `v*` tags, uploads to GitHub Release)
 - [ ] 256³ run (128 Mpc/h, ISIS paper resolution) — pending desktop machine
 - [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison (needs HPC)
-- [ ] Hydro (Option A): domain-grid Godunov hydro (`--features hydro`) — Ellewsen et al. comparison
-  - [ ] Run all 5 Ellewsen configs (ΛCDM + Sym A/B/C/D), 256³ 64 Mpc/h
-  - [ ] Compare stacked halo profiles to Ellewsen et al. Figs 3–5
+- [ ] Run all 5 Ellewsen configs (ΛCDM + Sym A/B/C/D), 256³ 64 Mpc/h — Sym A done; ΛCDM/B/C/D pending
+- [ ] Compare stacked halo profiles to Ellewsen et al. Figs 3–5 — digitize arXiv:1803.04197 Figs 3–5 into `analysis/reference/` CSVs
 
 #### Hydro Option B (preferred long-term)
 Gas fields embedded in AMR Cell struct with octree Godunov solver and AMR sub-cycling.
