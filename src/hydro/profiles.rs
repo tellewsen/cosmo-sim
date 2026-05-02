@@ -9,7 +9,7 @@ use crate::utils::types::Real;
 
 // ── FoF ──────────────────────────────────────────────────────────────────────
 
-fn find(parent: &mut Vec<usize>, mut x: usize) -> usize {
+fn find(parent: &mut [usize], mut x: usize) -> usize {
     while parent[x] != x {
         parent[x] = parent[parent[x]]; // path compression
         x = parent[x];
@@ -17,7 +17,7 @@ fn find(parent: &mut Vec<usize>, mut x: usize) -> usize {
     x
 }
 
-fn union(parent: &mut Vec<usize>, x: usize, y: usize) {
+fn union(parent: &mut [usize], x: usize, y: usize) {
     let rx = find(parent, x);
     let ry = find(parent, y);
     if rx != ry {
@@ -163,7 +163,7 @@ const R_MAX_FRAC: Real = 3.0;
 /// Compute stacked radial profiles for halos in a given mass range.
 ///
 /// Returns (r_mid/R200, rho_gas, T_K, rho_dm, counts, n_halos).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn stacked_profiles(
     dm_pos: &[[Real; 3]],
     gas_rho: &[Real],
@@ -237,7 +237,7 @@ pub fn stacked_profiles(
                 }
             }
             let r = (dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]).sqrt() / r200_h;
-            if r < R_MIN_FRAC || r >= R_MAX_FRAC {
+            if !(R_MIN_FRAC..R_MAX_FRAC).contains(&r) {
                 continue;
             }
             let bin = ((r.ln() - log_rmin) / dlog) as usize;
@@ -275,7 +275,7 @@ pub fn stacked_profiles(
                         }
                     }
                     let r = (dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]).sqrt() / r200_h;
-                    if r < R_MIN_FRAC || r >= R_MAX_FRAC {
+                    if !(R_MIN_FRAC..R_MAX_FRAC).contains(&r) {
                         continue;
                     }
                     let bin = ((r.ln() - log_rmin) / dlog) as usize;
@@ -314,6 +314,7 @@ pub fn stacked_profiles(
 }
 
 /// Write profiles to a text file.
+#[allow(clippy::too_many_arguments)]
 pub fn write_profiles(
     path: &str,
     r_mid: &[Real; N_BINS],

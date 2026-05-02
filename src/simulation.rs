@@ -450,7 +450,7 @@ impl Simulation {
                         dt_use,
                         self.config.cosmology.omega_m,
                         self.config.cosmology.h,
-                        self.step as u64,
+                        self.step,
                     );
                     for s in &mut new_stars {
                         s.age_a = self.a;
@@ -575,9 +575,9 @@ impl Simulation {
         }
 
         #[cfg(feature = "fofr")]
-        if sf.fofr0.is_some() {
+        if let Some(fofr0) = sf.fofr0 {
             let p = FofrParams {
-                fofr0: sf.fofr0.unwrap(),
+                fofr0,
                 n: sf.n_fofr.unwrap_or(1.0),
                 epsilon: sf.epsilon_mg.unwrap_or(1e-10),
                 max_iter: 150,
