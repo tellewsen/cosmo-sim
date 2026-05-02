@@ -166,6 +166,7 @@ pub fn sweep_x(
 
 /// Transpose gas arrays to bring axis `ax` into the x-position,
 /// call sweep_x, then transpose back.
+#[allow(clippy::too_many_arguments)]
 pub fn sweep_axis(
     gas_rho: &mut [f64],
     gas_vel: &mut [[f64; 3]],
@@ -259,6 +260,7 @@ pub fn hydro_cfl(
 /// Also applies gravitational acceleration `grav` as a body-force source term
 /// (operator-split after the flux update).
 /// If `fifth_force` is `Some(...)`, it is added to the body force as well.
+#[allow(clippy::too_many_arguments)]
 pub fn step(
     gas_rho: &mut [f64],
     gas_vel: &mut [[f64; 3]],

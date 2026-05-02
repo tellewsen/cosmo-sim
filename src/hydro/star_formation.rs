@@ -34,6 +34,7 @@ pub fn rho_sf_code(rho_sf_h_cm3: Real, omega_m: Real, h: Real) -> Real {
 ///
 /// Uses a deterministic pseudo-random check seeded by cell index + step
 /// to avoid introducing an RNG state.
+#[allow(clippy::too_many_arguments)]
 pub fn form_stars(
     gas_rho: &mut [Real],
     gas_vel: &[[Real; 3]],

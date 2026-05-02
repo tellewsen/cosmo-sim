@@ -17,6 +17,7 @@ const C_KMS: Real = 299_792.458;
 ///
 /// `t_hubble_myr` ≈ 9778 / h  Myr (Hubble time at z=0; = 9.78/h Gyr).
 /// The delay uses Δa rather than proper time for simplicity.
+#[allow(clippy::too_many_arguments)]
 pub fn supernova_feedback(
     star_particles: &mut Vec<StarParticle>,
     gas_u: &mut [Real],

@@ -30,6 +30,12 @@ jobs:
       - name: clippy (base)
         run: cargo clippy -- -D warnings
 
+      - name: clippy --features symmetron,hydro
+        run: cargo clippy --features symmetron,hydro -- -D warnings
+
+      - name: clippy --features fofr,hydro
+        run: cargo clippy --features fofr,hydro -- -D warnings
+
       - name: test (base)
         run: cargo test
 
