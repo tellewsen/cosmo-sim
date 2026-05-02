@@ -4,8 +4,8 @@
 //! E_SN = eps_sn × M_star × c² into the surrounding 27 cells
 //! with equal weighting.
 
-use crate::utils::types::Real;
 use crate::simulation::StarParticle;
+use crate::utils::types::Real;
 
 /// Speed of light [km/s].
 const C_KMS: Real = 299_792.458;
@@ -19,14 +19,14 @@ const C_KMS: Real = 299_792.458;
 /// The delay uses Δa rather than proper time for simplicity.
 pub fn supernova_feedback(
     star_particles: &mut Vec<StarParticle>,
-    gas_u:          &mut [Real],
-    a_current:      Real,
-    h:              Real,
-    eps_sn:         Real,
-    t_delay_myr:    Real,
-    n:              usize,
-    _dx:            Real,
-    box_size:       Real,
+    gas_u: &mut [Real],
+    a_current: Real,
+    h: Real,
+    eps_sn: Real,
+    t_delay_myr: Real,
+    n: usize,
+    _dx: Real,
+    box_size: Real,
 ) {
     // Δa threshold corresponding to t_delay_myr
     // H₀ = 100h km/s/Mpc → t_H0 = 9778/h Myr (= 9.78/h Gyr at z=0)
@@ -78,7 +78,10 @@ mod tests {
     #[test]
     fn immature_star_not_consumed() {
         let mut stars = vec![StarParticle {
-            pos: [0.5, 0.5, 0.5], vel: [0.0; 3], mass: 1e8, age_a: 0.9999,
+            pos: [0.5, 0.5, 0.5],
+            vel: [0.0; 3],
+            mass: 1e8,
+            age_a: 0.9999,
         }];
         let mut gas_u = vec![1.5f64; 4 * 4 * 4];
         // a_current = 1.0, Δa = 0.0001 → ~1.5 Myr elapsed << 100 Myr delay → not mature
@@ -90,7 +93,10 @@ mod tests {
     fn mature_star_deposits_energy() {
         let n = 8;
         let mut stars = vec![StarParticle {
-            pos: [4.0, 4.0, 4.0], vel: [0.0; 3], mass: 1e8, age_a: 0.0,
+            pos: [4.0, 4.0, 4.0],
+            vel: [0.0; 3],
+            mass: 1e8,
+            age_a: 0.0,
         }];
         let u0 = 1.5_f64;
         let mut gas_u = vec![u0; n * n * n];

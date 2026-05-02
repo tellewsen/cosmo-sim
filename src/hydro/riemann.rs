@@ -6,20 +6,26 @@
 /// MinMod slope limiter: returns 0 if slopes have opposite signs,
 /// otherwise the smaller-magnitude slope.
 pub fn minmod(a: f64, b: f64) -> f64 {
-    if a * b <= 0.0 { 0.0 }
-    else if a.abs() <= b.abs() { a }
-    else { b }
+    if a * b <= 0.0 {
+        0.0
+    } else if a.abs() <= b.abs() {
+        a
+    } else {
+        b
+    }
 }
 
 /// Pressure from conserved variables. Returns 0 for zero/negative density or negative kinetic energy.
 #[inline]
 pub fn pressure(u: &[f64; 5], gamma: f64) -> f64 {
     let rho = u[0];
-    if rho <= 0.0 { return 0.0; }
-    let vx  = u[1] / rho;
-    let vy  = u[2] / rho;
-    let vz  = u[3] / rho;
-    ((gamma - 1.0) * (u[4] - 0.5 * rho * (vx*vx + vy*vy + vz*vz))).max(0.0)
+    if rho <= 0.0 {
+        return 0.0;
+    }
+    let vx = u[1] / rho;
+    let vy = u[2] / rho;
+    let vz = u[3] / rho;
+    ((gamma - 1.0) * (u[4] - 0.5 * rho * (vx * vx + vy * vy + vz * vz))).max(0.0)
 }
 
 /// Physical flux in the x-direction: F = [ρvx, ρvx²+P, ρvxvy, ρvxvz, (E+P)vx].
@@ -27,11 +33,13 @@ pub fn pressure(u: &[f64; 5], gamma: f64) -> f64 {
 #[inline]
 pub fn flux_x(u: &[f64; 5], gamma: f64) -> [f64; 5] {
     let rho = u[0];
-    if rho <= 0.0 { return [0.0; 5]; }
-    let vx  = u[1] / rho;
-    let vy  = u[2] / rho;
-    let vz  = u[3] / rho;
-    let p   = pressure(u, gamma);
+    if rho <= 0.0 {
+        return [0.0; 5];
+    }
+    let vx = u[1] / rho;
+    let vy = u[2] / rho;
+    let vz = u[3] / rho;
+    let p = pressure(u, gamma);
     [
         rho * vx,
         rho * vx * vx + p,
@@ -44,12 +52,22 @@ pub fn flux_x(u: &[f64; 5], gamma: f64) -> [f64; 5] {
 /// HLL wave speed estimates (Einfeldt, 1988).
 /// Returns (S_L, S_R): left and right signal speeds.
 pub fn hll_speeds(u_l: &[f64; 5], u_r: &[f64; 5], gamma: f64) -> (f64, f64) {
-    let rho_l = u_l[0].max(0.0); let vx_l = if rho_l > 0.0 { u_l[1] / rho_l } else { 0.0 };
-    let rho_r = u_r[0].max(0.0); let vx_r = if rho_r > 0.0 { u_r[1] / rho_r } else { 0.0 };
+    let rho_l = u_l[0].max(0.0);
+    let vx_l = if rho_l > 0.0 { u_l[1] / rho_l } else { 0.0 };
+    let rho_r = u_r[0].max(0.0);
+    let vx_r = if rho_r > 0.0 { u_r[1] / rho_r } else { 0.0 };
     let p_l = pressure(u_l, gamma);
     let p_r = pressure(u_r, gamma);
-    let cs_l = if rho_l > 0.0 { (gamma * p_l / rho_l).sqrt() } else { 0.0 };
-    let cs_r = if rho_r > 0.0 { (gamma * p_r / rho_r).sqrt() } else { 0.0 };
+    let cs_l = if rho_l > 0.0 {
+        (gamma * p_l / rho_l).sqrt()
+    } else {
+        0.0
+    };
+    let cs_r = if rho_r > 0.0 {
+        (gamma * p_r / rho_r).sqrt()
+    } else {
+        0.0
+    };
     let s_l = (vx_l - cs_l).min(vx_r - cs_r);
     let s_r = (vx_l + cs_l).max(vx_r + cs_r);
     (s_l, s_r)
@@ -58,8 +76,12 @@ pub fn hll_speeds(u_l: &[f64; 5], u_r: &[f64; 5], gamma: f64) -> (f64, f64) {
 /// HLL intercell flux at the interface between left state U_L and right state U_R.
 pub fn hll_flux(u_l: &[f64; 5], u_r: &[f64; 5], gamma: f64) -> [f64; 5] {
     let (s_l, s_r) = hll_speeds(u_l, u_r, gamma);
-    if s_l >= 0.0 { return flux_x(u_l, gamma); }
-    if s_r <= 0.0 { return flux_x(u_r, gamma); }
+    if s_l >= 0.0 {
+        return flux_x(u_l, gamma);
+    }
+    if s_r <= 0.0 {
+        return flux_x(u_r, gamma);
+    }
     let f_l = flux_x(u_l, gamma);
     let f_r = flux_x(u_r, gamma);
     let ds = s_r - s_l;
@@ -123,7 +145,12 @@ mod tests {
         let f = hll_flux(&ul, &u_r, gamma);
         let f_l = flux_x(&ul, gamma);
         for i in 0..5 {
-            assert!((f[i] - f_l[i]).abs() < 1e-10, "component {i}: {:.4} vs {:.4}", f[i], f_l[i]);
+            assert!(
+                (f[i] - f_l[i]).abs() < 1e-10,
+                "component {i}: {:.4} vs {:.4}",
+                f[i],
+                f_l[i]
+            );
         }
     }
 

@@ -4,15 +4,17 @@
 //! (Sutherland & Dopita 1993). Operator-split from hydro: each cell
 //! integrated independently over dt.
 
+use crate::hydro::ic::{temperature_from_u, u_from_temperature};
 use crate::utils::types::Real;
-use crate::hydro::ic::{u_from_temperature, temperature_from_u};
 
 /// Cooling rate Λ(T) in units of erg cm³/s (normalised to n_H²).
 /// Returns 0 below T_floor (photoionisation equilibrium assumption).
 pub fn lambda_cooling(t_k: Real) -> Real {
-    const T_FLOOR: Real = 1.0e4;  // K
-    const T_BREAK: Real = 1.0e5;  // K
-    if t_k < T_FLOOR { return 0.0; }
+    const T_FLOOR: Real = 1.0e4; // K
+    const T_BREAK: Real = 1.0e5; // K
+    if t_k < T_FLOOR {
+        return 0.0;
+    }
     if t_k < T_BREAK {
         1.0e-22 * (t_k / T_FLOOR).powf(0.5)
     } else {
@@ -32,8 +34,8 @@ pub fn lambda_cooling(t_k: Real) -> Real {
 /// Full pre-factor: pre = (X/m_p)² × ρ̄_cgs × ERG_TO_KMS2
 /// du/dt [km/s² per code-τ] = −Λ_cgs × pre × gas_rho × dt_seconds
 pub fn cooling_prefactor(omega_m: Real, h: Real) -> Real {
-    const X_H: Real = 0.76;          // hydrogen mass fraction
-    const M_P: Real = 1.673e-24;     // g
+    const X_H: Real = 0.76; // hydrogen mass fraction
+    const M_P: Real = 1.673e-24; // g
     const ERG_TO_KMS2: Real = 1e-10; // erg/g → (km/s)²
     let rho_bar_cgs = 9.47e-30 * omega_m * h * h;
     (X_H / M_P).powi(2) * rho_bar_cgs * ERG_TO_KMS2
@@ -49,33 +51,23 @@ pub fn tau_to_seconds(h: Real) -> Real {
 /// Apply radiative cooling to a single cell for timestep dt [τ].
 ///
 /// Returns new specific internal energy u (floored at u(T_floor = 10⁴ K)).
-pub fn cool_cell(
-    gas_rho: Real,
-    u: Real,
-    dt: Real,
-    omega_m: Real,
-    h: Real,
-) -> Real {
+pub fn cool_cell(gas_rho: Real, u: Real, dt: Real, omega_m: Real, h: Real) -> Real {
     let t_k = temperature_from_u(u);
     let lam = lambda_cooling(t_k);
-    if lam == 0.0 { return u; }
+    if lam == 0.0 {
+        return u;
+    }
 
-    let pre   = cooling_prefactor(omega_m, h);
-    let dt_s  = dt * tau_to_seconds(h);
-    let du    = lam * pre * gas_rho * dt_s;
+    let pre = cooling_prefactor(omega_m, h);
+    let dt_s = dt * tau_to_seconds(h);
+    let du = lam * pre * gas_rho * dt_s;
     let u_new = u - du;
 
     u_new.max(u_from_temperature(1.0e4))
 }
 
 /// Apply cooling to the full gas grid.
-pub fn cooling_step(
-    gas_rho: &[Real],
-    gas_u:   &mut [Real],
-    dt:      Real,
-    omega_m: Real,
-    h:       Real,
-) {
+pub fn cooling_step(gas_rho: &[Real], gas_u: &mut [Real], dt: Real, omega_m: Real, h: Real) {
     for i in 0..gas_rho.len() {
         gas_u[i] = cool_cell(gas_rho[i], gas_u[i], dt, omega_m, h);
     }
@@ -104,14 +96,14 @@ mod tests {
         // The two-power-law approximation has an intentional discontinuity at T_BREAK;
         // we verify each branch is well-behaved independently.
         assert!(lambda_cooling(9.99e4) > 0.0 && lambda_cooling(9.99e4).is_finite());
-        assert!(lambda_cooling(1.0e5) > 0.0  && lambda_cooling(1.0e5).is_finite());
+        assert!(lambda_cooling(1.0e5) > 0.0 && lambda_cooling(1.0e5).is_finite());
         assert!(lambda_cooling(1.01e5) > 0.0 && lambda_cooling(1.01e5).is_finite());
     }
 
     #[test]
     fn cool_cell_floors_at_t_min() {
         // Hot gas should cool but not below 10^4 K
-        let u_hot  = crate::hydro::ic::u_from_temperature(1.0e8);
+        let u_hot = crate::hydro::ic::u_from_temperature(1.0e8);
         let u_cool = cool_cell(1.0, u_hot, 1000.0, 0.3, 0.67);
         let t_cool = temperature_from_u(u_cool);
         assert!(t_cool >= 1.0e4 - 1.0, "cooled below floor: T={t_cool:.1} K");
@@ -120,7 +112,7 @@ mod tests {
     #[test]
     fn cool_cell_does_nothing_at_floor() {
         let u_floor = crate::hydro::ic::u_from_temperature(1.0e4);
-        let u_out   = cool_cell(1.0, u_floor, 1.0, 0.3, 0.67);
+        let u_out = cool_cell(1.0, u_floor, 1.0, 0.3, 0.67);
         assert!((u_out - u_floor).abs() / u_floor < 1e-10);
     }
 }

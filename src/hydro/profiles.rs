@@ -31,11 +31,7 @@ fn union(parent: &mut Vec<usize>, x: usize, y: usize) {
 /// Pair search includes periodic boundary wrapping.
 ///
 /// Returns a `Vec<Vec<usize>>` — each inner vec is the particle indices of one group.
-pub fn friends_of_friends(
-    pos:      &[[Real; 3]],
-    b:        Real,
-    box_size: Real,
-) -> Vec<Vec<usize>> {
+pub fn friends_of_friends(pos: &[[Real; 3]], b: Real, box_size: Real) -> Vec<Vec<usize>> {
     let n = pos.len();
     if n == 0 {
         return Vec::new();
@@ -48,7 +44,7 @@ pub fn friends_of_friends(
     // particles (prevents O(N²) memory for tiny b relative to box_size).
     // Reducing n_cells makes cell_size larger (≥ b) — correctness is preserved.
     let n_cells_ideal = (box_size / b).floor() as usize;
-    let n_cells_cap   = (n as f64).cbrt().ceil() as usize + 1;
+    let n_cells_cap = (n as f64).cbrt().ceil() as usize + 1;
     let n_cells = n_cells_ideal.min(n_cells_cap).max(1);
     let cell_size = box_size / n_cells as Real;
 
@@ -98,7 +94,11 @@ pub fn friends_of_friends(
                     for (pos_in_cell, &i) in cells[ci_flat].iter().enumerate() {
                         // Within the same cell: start after i's position to avoid
                         // duplicate pairs.  For adjacent cells: start from 0.
-                        let start = if ni_flat == ci_flat { pos_in_cell + 1 } else { 0 };
+                        let start = if ni_flat == ci_flat {
+                            pos_in_cell + 1
+                        } else {
+                            0
+                        };
 
                         for &j in &cells[ni_flat][start..] {
                             // Periodic minimum-image distance
@@ -165,22 +165,37 @@ const R_MAX_FRAC: Real = 3.0;
 /// Returns (r_mid/R200, rho_gas, T_K, rho_dm, counts, n_halos).
 #[allow(clippy::too_many_arguments)]
 pub fn stacked_profiles(
-    dm_pos:   &[[Real; 3]],
-    gas_rho:  &[Real],
-    gas_u:    &[Real],
-    n_grid:   usize,
+    dm_pos: &[[Real; 3]],
+    gas_rho: &[Real],
+    gas_u: &[Real],
+    n_grid: usize,
     box_size: Real,
-    m_part:   Real,
-    omega_m:  Real,
-    h:        Real,
-    m_min:    Real,
-    m_max:    Real,
-    groups:   &[Vec<usize>],
-) -> ([Real; N_BINS], [Real; N_BINS], [Real; N_BINS], [Real; N_BINS], [usize; N_BINS], usize) {
+    m_part: Real,
+    omega_m: Real,
+    h: Real,
+    m_min: Real,
+    m_max: Real,
+    groups: &[Vec<usize>],
+) -> (
+    [Real; N_BINS],
+    [Real; N_BINS],
+    [Real; N_BINS],
+    [Real; N_BINS],
+    [usize; N_BINS],
+    usize,
+) {
     let _ = omega_m; // retained for potential future use (e.g. z-dependent ρ_crit)
     let dx = box_size / n_grid as Real;
-    debug_assert_eq!(gas_rho.len(), n_grid * n_grid * n_grid, "gas_rho length mismatch");
-    debug_assert_eq!(gas_u.len(),   n_grid * n_grid * n_grid, "gas_u length mismatch");
+    debug_assert_eq!(
+        gas_rho.len(),
+        n_grid * n_grid * n_grid,
+        "gas_rho length mismatch"
+    );
+    debug_assert_eq!(
+        gas_u.len(),
+        n_grid * n_grid * n_grid,
+        "gas_u length mismatch"
+    );
 
     // T [K] = (μ m_p / k_B) × u [km/s]²
     // k_B = 8.314e-3 (km/s)²/K × m_p,  μ = 0.59
@@ -192,10 +207,10 @@ pub fn stacked_profiles(
     let dlog = (log_rmax - log_rmin) / N_BINS as Real;
 
     let mut rho_gas_sum = [0.0f64; N_BINS];
-    let mut t_sum       = [0.0f64; N_BINS];
-    let mut rho_dm_sum  = [0.0f64; N_BINS];
-    let mut counts      = [0usize; N_BINS];
-    let mut n_halos     = 0usize;
+    let mut t_sum = [0.0f64; N_BINS];
+    let mut rho_dm_sum = [0.0f64; N_BINS];
+    let mut counts = [0usize; N_BINS];
+    let mut n_halos = 0usize;
 
     for group in groups {
         let m_halo = group.len() as Real * m_part;
@@ -217,7 +232,9 @@ pub fn stacked_profiles(
             ];
             // Periodic wrapping
             for d in &mut dr {
-                if d.abs() > box_size * 0.5 { *d -= d.signum() * box_size; }
+                if d.abs() > box_size * 0.5 {
+                    *d -= d.signum() * box_size;
+                }
             }
             let r = (dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]).sqrt() / r200_h;
             if r < R_MIN_FRAC || r >= R_MAX_FRAC {
@@ -253,10 +270,11 @@ pub fn stacked_profiles(
                         cell_pos[2] - centre[2],
                     ];
                     for d in &mut dr {
-                        if d.abs() > box_size * 0.5 { *d -= d.signum() * box_size; }
+                        if d.abs() > box_size * 0.5 {
+                            *d -= d.signum() * box_size;
+                        }
                     }
-                    let r =
-                        (dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]).sqrt() / r200_h;
+                    let r = (dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2]).sqrt() / r200_h;
                     if r < R_MIN_FRAC || r >= R_MAX_FRAC {
                         continue;
                     }
@@ -278,10 +296,10 @@ pub fn stacked_profiles(
     }
 
     // Normalise
-    let mut r_mid   = [0.0f64; N_BINS];
+    let mut r_mid = [0.0f64; N_BINS];
     let mut rho_gas = [0.0f64; N_BINS];
-    let mut t_mean  = [0.0f64; N_BINS];
-    let mut rho_dm  = [0.0f64; N_BINS];
+    let mut t_mean = [0.0f64; N_BINS];
+    let mut rho_dm = [0.0f64; N_BINS];
     for bin in 0..N_BINS {
         r_mid[bin] = (log_rmin + (bin as Real + 0.5) * dlog).exp();
         if counts[bin] > 0 {
@@ -297,19 +315,23 @@ pub fn stacked_profiles(
 
 /// Write profiles to a text file.
 pub fn write_profiles(
-    path:      &str,
-    r_mid:     &[Real; N_BINS],
-    rho_gas:   &[Real; N_BINS],
-    t_k:       &[Real; N_BINS],
-    rho_dm:    &[Real; N_BINS],
-    counts:    &[usize; N_BINS],
-    n_halos:   usize,
+    path: &str,
+    r_mid: &[Real; N_BINS],
+    rho_gas: &[Real; N_BINS],
+    t_k: &[Real; N_BINS],
+    rho_dm: &[Real; N_BINS],
+    counts: &[usize; N_BINS],
+    n_halos: usize,
     mass_label: &str,
 ) {
     use std::io::Write;
     let mut f = std::fs::File::create(path).expect("Cannot create profile file");
     writeln!(f, "# mass_bin={mass_label}  n_halos={n_halos}").unwrap();
-    writeln!(f, "# r/R200  rho_gas/rho_mean  T_K  rho_dm/rho_mean  N_cells").unwrap();
+    writeln!(
+        f,
+        "# r/R200  rho_gas/rho_mean  T_K  rho_dm/rho_mean  N_cells"
+    )
+    .unwrap();
     for i in 0..N_BINS {
         writeln!(
             f,
@@ -336,18 +358,25 @@ mod tests {
         let groups = friends_of_friends(&pos, 0.05, 200.0);
         let sizes: Vec<usize> = groups.iter().map(|g| g.len()).collect();
         assert!(sizes.contains(&8), "did not find cluster of 8: {sizes:?}");
-        assert!(sizes.contains(&1), "did not find isolated particle: {sizes:?}");
+        assert!(
+            sizes.contains(&1),
+            "did not find isolated particle: {sizes:?}"
+        );
     }
 
     #[test]
     fn fof_links_across_periodic_boundary() {
         // Two particles on opposite sides of the box that should be linked periodically
         let pos = vec![
-            [0.1f64, 0.0, 0.0],   // near left edge
-            [99.9f64, 0.0, 0.0],  // near right edge → distance = 0.2 < b=0.5
+            [0.1f64, 0.0, 0.0],  // near left edge
+            [99.9f64, 0.0, 0.0], // near right edge → distance = 0.2 < b=0.5
         ];
         let groups = friends_of_friends(&pos, 0.5, 100.0);
-        assert_eq!(groups.len(), 1, "particles across boundary should be linked");
+        assert_eq!(
+            groups.len(),
+            1,
+            "particles across boundary should be linked"
+        );
         assert_eq!(groups[0].len(), 2);
     }
 
