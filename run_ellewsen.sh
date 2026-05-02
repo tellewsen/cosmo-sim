@@ -117,6 +117,7 @@ case "$CMD" in
     mkdir -p figures
     uv run python analysis/plot_halo_profiles.py \
       --dirs "${DIRS[@]}" --labels "${LABELS[@]}" \
+      --reference-dir analysis/reference \
       --out figures/ellewsen_profiles.pdf
     echo "Plot written to figures/ellewsen_profiles.pdf"
     ;;
