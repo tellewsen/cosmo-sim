@@ -250,7 +250,10 @@ pub(crate) fn restrict_slab(
 /// are accessed at `lci_base = 0` and `lci_base = n_local_ic + 1` respectively.
 #[cfg(feature = "mpi_parallel")]
 pub(crate) fn prolongate_slab(coarse: &[Real], n_local_i: usize, n: usize) -> Vec<Real> {
-    debug_assert!(n_local_i.is_multiple_of(2), "n_local_i must be even for coarsening");
+    debug_assert!(
+        n_local_i.is_multiple_of(2),
+        "n_local_i must be even for coarsening"
+    );
     let nc = n / 2;
     let mut fine = vec![0.0; (n_local_i + 2) * n * n];
 

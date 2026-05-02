@@ -144,14 +144,7 @@ pub fn prolongate_uniform(coarse: &[Real], nc: usize) -> Vec<Real> {
 // ─── V-cycle ──────────────────────────────────────────────────────────────────
 
 /// One multigrid V-cycle for  ∇²Φ = rhs.  Modifies `phi` in-place.
-pub fn v_cycle(
-    phi: &mut [Real],
-    rhs: &[Real],
-    dx: Real,
-    n: usize,
-    n_smooth: usize,
-    min_n: usize,
-) {
+pub fn v_cycle(phi: &mut [Real], rhs: &[Real], dx: Real, n: usize, n_smooth: usize, min_n: usize) {
     for _ in 0..n_smooth {
         gs_sweep(phi, rhs, dx, n);
     }
