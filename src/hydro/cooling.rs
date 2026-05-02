@@ -50,20 +50,41 @@ pub fn tau_to_seconds(h: Real) -> Real {
 
 /// Apply radiative cooling to a single cell for timestep dt [τ].
 ///
+/// Uses subcycling: splits dt into sub-steps small enough that each changes
+/// u by at most 10%, preventing over-cooling when dt >> t_cool.
+///
 /// Returns new specific internal energy u (floored at u(T_floor = 10⁴ K)).
 pub fn cool_cell(gas_rho: Real, u: Real, dt: Real, omega_m: Real, h: Real) -> Real {
-    let t_k = temperature_from_u(u);
-    let lam = lambda_cooling(t_k);
-    if lam == 0.0 {
-        return u;
+    let u_floor = u_from_temperature(1.0e4);
+    if u <= u_floor {
+        return u_floor;
     }
 
     let pre = cooling_prefactor(omega_m, h);
-    let dt_s = dt * tau_to_seconds(h);
-    let du = lam * pre * gas_rho * dt_s;
-    let u_new = u - du;
+    let tau_s = tau_to_seconds(h);
 
-    u_new.max(u_from_temperature(1.0e4))
+    let mut u_cur = u;
+    let mut t_remaining = dt * tau_s; // seconds
+
+    while t_remaining > 0.0 {
+        let t_k = temperature_from_u(u_cur);
+        let lam = lambda_cooling(t_k);
+        if lam == 0.0 {
+            break;
+        }
+
+        let du_rate = lam * pre * gas_rho; // (km/s)² / s
+        // Sub-step: at most 10% change in u, at most remaining time
+        let dt_sub = (0.1 * u_cur / du_rate).min(t_remaining);
+        u_cur = (u_cur - du_rate * dt_sub).max(u_floor);
+        t_remaining -= dt_sub;
+
+        if u_cur <= u_floor {
+            break;
+        }
+    }
+
+    u_cur
 }
 
 /// Apply cooling to the full gas grid.
@@ -114,5 +135,37 @@ mod tests {
         let u_floor = crate::hydro::ic::u_from_temperature(1.0e4);
         let u_out = cool_cell(1.0, u_floor, 1.0, 0.3, 0.67);
         assert!((u_out - u_floor).abs() / u_floor < 1e-10);
+    }
+
+    #[test]
+    fn cool_cell_subcycling_agrees_with_many_small_steps() {
+        // One large step vs many tiny steps should give the same answer (within 1%).
+        let u0 = crate::hydro::ic::u_from_temperature(1.0e7);
+        let gas_rho = 10.0;
+        let dt_big = 1.0;
+        let n_small = 1000usize;
+        let dt_small = dt_big / n_small as Real;
+
+        let u_big = cool_cell(gas_rho, u0, dt_big, 0.3, 0.67);
+
+        let mut u_small = u0;
+        for _ in 0..n_small {
+            u_small = cool_cell(gas_rho, u_small, dt_small, 0.3, 0.67);
+        }
+
+        let rel_err = (u_big - u_small).abs() / u_small;
+        assert!(rel_err < 0.01, "subcycling vs many-steps: rel_err={rel_err:.4}");
+    }
+
+    #[test]
+    fn cool_cell_large_dt_stays_at_floor() {
+        // Extremely large timestep must not go below the 10^4 K floor.
+        let u0 = crate::hydro::ic::u_from_temperature(1.0e6);
+        let u_out = cool_cell(100.0, u0, 1e6, 0.3, 0.67);
+        let t_out = temperature_from_u(u_out);
+        assert!(
+            t_out >= 1.0e4 - 1.0,
+            "temperature below floor: T={t_out:.1} K"
+        );
     }
 }
