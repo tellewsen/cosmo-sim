@@ -28,13 +28,13 @@ use rayon::prelude::*;
 /// eliminates heap churn that dominated wallclock time.
 pub struct SimScratch {
     /// Density field (length n^3)
-    pub rho:     Vec<Real>,
+    pub rho: Vec<Real>,
     /// Poisson source term (length n^3)
-    pub source:  Vec<Real>,
+    pub source: Vec<Real>,
     /// Gravitational potential (length n^3)
-    pub phi:     Vec<Real>,
+    pub phi: Vec<Real>,
     /// Gravitational acceleration grid (length n^3)
-    pub grav:    Vec<[Real; 3]>,
+    pub grav: Vec<[Real; 3]>,
     /// FFT complex work buffer (length n^3, fft_pm only)
     #[cfg(feature = "fft_pm")]
     pub fft_buf: Vec<rustfft::num_complex::Complex<f64>>,
@@ -78,14 +78,18 @@ impl SimScratch {
         let cell_pos: Vec<[Real; 3]> = (0..n3)
             .map(|flat| {
                 let (ix, iy, iz) = crate::utils::types::from_flat(flat, n);
-                [(ix as Real + 0.5) * dx, (iy as Real + 0.5) * dx, (iz as Real + 0.5) * dx]
+                [
+                    (ix as Real + 0.5) * dx,
+                    (iy as Real + 0.5) * dx,
+                    (iz as Real + 0.5) * dx,
+                ]
             })
             .collect();
         Self {
-            rho:    vec![0.0_f64; n3],
+            rho: vec![0.0_f64; n3],
             source: vec![0.0_f64; n3],
-            phi:    vec![0.0_f64; n3],
-            grav:   vec![[0.0_f64; 3]; n3],
+            phi: vec![0.0_f64; n3],
+            grav: vec![[0.0_f64; 3]; n3],
             #[cfg(feature = "fft_pm")]
             fft_buf: vec![rustfft::num_complex::Complex::new(0.0, 0.0); n3],
             #[cfg(feature = "fft_pm")]
@@ -112,9 +116,9 @@ impl SimScratch {
 /// A star particle formed from collapsed gas via stochastic star formation.
 #[derive(Debug, Clone)]
 pub struct StarParticle {
-    pub pos:   [Real; 3],
-    pub vel:   [Real; 3],
-    pub mass:  Real,
+    pub pos: [Real; 3],
+    pub vel: [Real; 3],
+    pub mass: Real,
     /// Scale factor at formation.
     pub age_a: Real,
 }
@@ -122,10 +126,10 @@ pub struct StarParticle {
 #[cfg(feature = "symmetron")]
 use crate::scalar_field::symmetron::{fifth_force_grid, solve_symmetron, SymmetronParams};
 
-#[cfg(feature = "fofr")]
-use crate::scalar_field::fofr::{fofr_fifth_force, FofrParams};
 #[cfg(all(feature = "fofr", not(feature = "mpi_parallel")))]
 use crate::scalar_field::fofr::solve_fofr;
+#[cfg(feature = "fofr")]
+use crate::scalar_field::fofr::{fofr_fifth_force, FofrParams};
 
 /// The complete simulation state.
 pub struct Simulation {
@@ -288,8 +292,10 @@ impl Simulation {
                 &mut self.scratch.gas_vel,
                 &mut self.scratch.gas_u,
             );
-            log::info!("Gas ICs initialised: omega_b/omega_m = {:.4}, T_init = 100 K",
-                self.config.cosmology.omega_b / self.config.cosmology.omega_m);
+            log::info!(
+                "Gas ICs initialised: omega_b/omega_m = {:.4}, T_init = 100 K",
+                self.config.cosmology.omega_b / self.config.cosmology.omega_m
+            );
         }
 
         while self.a < a_final {
@@ -501,17 +507,13 @@ impl Simulation {
             // All ranks participate in the gather (collective); only rank 0
             // gets Some(...) and writes the snapshot + power spectrum.
             if next_out < out_times.len() && self.a >= out_times[next_out] {
-                let gathered = self.mpi_ctx.gather_particles_to_root(
-                    &self.particles.pos,
-                    &self.particles.vel,
-                );
+                let gathered = self
+                    .mpi_ctx
+                    .gather_particles_to_root(&self.particles.pos, &self.particles.vel);
                 if let Some((all_pos, all_vel)) = gathered {
                     let n_total = all_pos.len();
-                    let mut all_parts = Particles::new(
-                        n_total,
-                        self.particles.mass,
-                        self.particles.box_size,
-                    );
+                    let mut all_parts =
+                        Particles::new(n_total, self.particles.mass, self.particles.box_size);
                     all_parts.pos = all_pos;
                     all_parts.vel = all_vel;
                     self.write_snapshot_from(next_out, &all_parts);
@@ -544,9 +546,9 @@ impl Simulation {
             let chi_new = {
                 use crate::scalar_field::symmetron::solve_symmetron_mpi;
                 let n_local_i = self.mpi_ctx.slab_count(n);
-                let i0        = self.mpi_ctx.slab_start(n);
-                let rho_slab  = &self.scratch.rho[i0 * n * n..(i0 + n_local_i) * n * n];
-                let chi_slab  = solve_symmetron_mpi(rho_slab, self.a, dx, n, &p, &self.mpi_ctx);
+                let i0 = self.mpi_ctx.slab_start(n);
+                let rho_slab = &self.scratch.rho[i0 * n * n..(i0 + n_local_i) * n * n];
+                let chi_slab = solve_symmetron_mpi(rho_slab, self.a, dx, n, &p, &self.mpi_ctx);
                 self.mpi_ctx.allgather_slabs(&chi_slab, n)
             };
 
@@ -563,9 +565,10 @@ impl Simulation {
             //   v₀ = H₀_h × λ₀   [km/s],   H₀_h = 100 km/s/(Mpc/h)
             // so the factor v₀² converts (Mpc/h)⁻¹ → (km/s)²/(Mpc/h), matching
             // the Poisson solver.  This gives F₅/F_N ~ 2β₀² at full coupling.
-            let v0 = 100.0 * p.lambda_0;   // H₀_h × λ₀  [km/s]
+            let v0 = 100.0 * p.lambda_0; // H₀_h × λ₀  [km/s]
             let factor = v0 * v0;
-            let f5: Vec<[Real; 3]> = f5_raw.iter()
+            let f5: Vec<[Real; 3]> = f5_raw
+                .iter()
                 .map(|v| [v[0] * factor, v[1] * factor, v[2] * factor])
                 .collect();
             return Some(f5);
@@ -584,9 +587,10 @@ impl Simulation {
             let chi_new = {
                 use crate::scalar_field::fofr::solve_fofr_mpi;
                 let n_local_i = self.mpi_ctx.slab_count(n);
-                let i0        = self.mpi_ctx.slab_start(n);
-                let rho_slab  = &self.scratch.rho[i0 * n * n..(i0 + n_local_i) * n * n];
-                let fofr_slab = solve_fofr_mpi(rho_slab, self.a, dx, n, &p, &self.cosmology, &self.mpi_ctx);
+                let i0 = self.mpi_ctx.slab_start(n);
+                let rho_slab = &self.scratch.rho[i0 * n * n..(i0 + n_local_i) * n * n];
+                let fofr_slab =
+                    solve_fofr_mpi(rho_slab, self.a, dx, n, &p, &self.cosmology, &self.mpi_ctx);
                 self.mpi_ctx.allgather_slabs(&fofr_slab, n)
             };
             #[cfg(not(feature = "mpi_parallel"))]
@@ -599,7 +603,8 @@ impl Simulation {
             // c² = (299 792 km/s)² to match Poisson solver units (km/s)²/(Mpc/h).
             const C_CODE: Real = 299_792.458;
             let c2 = C_CODE * C_CODE;
-            let f5: Vec<[Real; 3]> = f5_raw.iter()
+            let f5: Vec<[Real; 3]> = f5_raw
+                .iter()
                 .map(|v| [v[0] * c2, v[1] * c2, v[2] * c2])
                 .collect();
             return Some(f5);
@@ -684,29 +689,47 @@ impl Simulation {
         #[cfg(feature = "hdf5_output")]
         if self.config.output.hdf5 {
             let h5_path = format!("{dir}/snapshot_{idx:04}.h5");
-            let file = ::hdf5::File::create(&h5_path)
-                .expect("Cannot create HDF5 snapshot file");
+            let file = ::hdf5::File::create(&h5_path).expect("Cannot create HDF5 snapshot file");
 
             // Root attributes
-            file.new_attr_builder().with_data(&[self.a]).create("a").unwrap();
-            file.new_attr_builder().with_data(&[self.step as u64]).create("step").unwrap();
+            file.new_attr_builder()
+                .with_data(&[self.a])
+                .create("a")
+                .unwrap();
+            file.new_attr_builder()
+                .with_data(&[self.step as u64])
+                .create("step")
+                .unwrap();
             file.new_attr_builder()
                 .with_data(&[self.config.run.box_size])
-                .create("box_size_mpc_h").unwrap();
+                .create("box_size_mpc_h")
+                .unwrap();
 
             // DM group  (row-major flat layout: [n_part × 3])
             let dm = file.create_group("dm").unwrap();
             let n = parts.n;
-            let pos_flat: Vec<f64> = parts.pos.iter()
-                .flat_map(|p| p.iter().copied()).collect();
-            let vel_flat: Vec<f64> = parts.vel.iter()
-                .flat_map(|v| v.iter().copied()).collect();
-            dm.new_dataset::<f64>().shape([n, 3]).create("pos").unwrap()
-                .write_raw(&pos_flat).unwrap();
-            dm.new_dataset::<f64>().shape([n, 3]).create("vel").unwrap()
-                .write_raw(&vel_flat).unwrap();
-            dm.new_attr_builder().with_data(&[n as u64]).create("n_part").unwrap();
-            dm.new_attr_builder().with_data(&[parts.mass]).create("mass_msun_h").unwrap();
+            let pos_flat: Vec<f64> = parts.pos.iter().flat_map(|p| p.iter().copied()).collect();
+            let vel_flat: Vec<f64> = parts.vel.iter().flat_map(|v| v.iter().copied()).collect();
+            dm.new_dataset::<f64>()
+                .shape([n, 3])
+                .create("pos")
+                .unwrap()
+                .write_raw(&pos_flat)
+                .unwrap();
+            dm.new_dataset::<f64>()
+                .shape([n, 3])
+                .create("vel")
+                .unwrap()
+                .write_raw(&vel_flat)
+                .unwrap();
+            dm.new_attr_builder()
+                .with_data(&[n as u64])
+                .create("n_part")
+                .unwrap();
+            dm.new_attr_builder()
+                .with_data(&[parts.mass])
+                .create("mass_msun_h")
+                .unwrap();
 
             // Gas group  (rho/u: [n³], vel: [n³ × 3])
             #[cfg(feature = "hydro")]
@@ -715,17 +738,35 @@ impl Simulation {
                 let n3 = n_grid * n_grid * n_grid;
                 let gas = file.create_group("gas").unwrap();
                 let vel_flat: Vec<f64> = self.scratch.gas_vel[..n3]
-                    .iter().flat_map(|v| v.iter().copied()).collect();
-                gas.new_dataset::<f64>().shape([n3]).create("rho").unwrap()
-                    .write_raw(&self.scratch.gas_rho[..n3]).unwrap();
-                gas.new_dataset::<f64>().shape([n3]).create("u").unwrap()
-                    .write_raw(&self.scratch.gas_u[..n3]).unwrap();
-                gas.new_dataset::<f64>().shape([n3, 3]).create("vel").unwrap()
-                    .write_raw(&vel_flat).unwrap();
+                    .iter()
+                    .flat_map(|v| v.iter().copied())
+                    .collect();
+                gas.new_dataset::<f64>()
+                    .shape([n3])
+                    .create("rho")
+                    .unwrap()
+                    .write_raw(&self.scratch.gas_rho[..n3])
+                    .unwrap();
+                gas.new_dataset::<f64>()
+                    .shape([n3])
+                    .create("u")
+                    .unwrap()
+                    .write_raw(&self.scratch.gas_u[..n3])
+                    .unwrap();
+                gas.new_dataset::<f64>()
+                    .shape([n3, 3])
+                    .create("vel")
+                    .unwrap()
+                    .write_raw(&vel_flat)
+                    .unwrap();
                 gas.new_attr_builder()
-                    .with_data(&[n_grid as u64]).create("n_grid").unwrap();
+                    .with_data(&[n_grid as u64])
+                    .create("n_grid")
+                    .unwrap();
                 gas.new_attr_builder()
-                    .with_data(&[self.config.hydro.gamma]).create("gamma").unwrap();
+                    .with_data(&[self.config.hydro.gamma])
+                    .create("gamma")
+                    .unwrap();
             }
 
             log::info!("HDF5 snapshot {idx:04} → {h5_path}");
@@ -737,8 +778,7 @@ impl Simulation {
             // Gas grid is not MPI-decomposed in Option A — lives fully on all ranks (replicated).
             // This is consistent with the Option A design; Option B will fix this.
             let gas_path = format!("{dir}/gas_snapshot_{idx:04}.bin");
-            let mut gf = std::fs::File::create(&gas_path)
-                .expect("Cannot create gas snapshot file");
+            let mut gf = std::fs::File::create(&gas_path).expect("Cannot create gas snapshot file");
             // Header: [step:u64][a:f64][n_cells:u64]
             gf.write_all(&self.step.to_le_bytes()).unwrap();
             gf.write_all(&self.a.to_le_bytes()).unwrap();
@@ -747,9 +787,11 @@ impl Simulation {
             gf.write_all(&n3.to_le_bytes()).unwrap();
             // Per-cell: [rho:f64][vx:f64][vy:f64][vz:f64][u:f64]
             for i in 0..n_grid.pow(3) {
-                gf.write_all(&self.scratch.gas_rho[i].to_le_bytes()).unwrap();
+                gf.write_all(&self.scratch.gas_rho[i].to_le_bytes())
+                    .unwrap();
                 for d in 0..3 {
-                    gf.write_all(&self.scratch.gas_vel[i][d].to_le_bytes()).unwrap();
+                    gf.write_all(&self.scratch.gas_vel[i][d].to_le_bytes())
+                        .unwrap();
                 }
                 gf.write_all(&self.scratch.gas_u[i].to_le_bytes()).unwrap();
             }
@@ -757,35 +799,61 @@ impl Simulation {
 
             // ── Halo profiles ─────────────────────────────────────────────
             use crate::hydro::profiles::{friends_of_friends, stacked_profiles, write_profiles};
-            let n_grid   = self.config.run.n_grid as usize;
+            let n_grid = self.config.run.n_grid as usize;
             let box_size = self.config.run.box_size;
             // Linking length: b = 0.2 × mean inter-particle spacing = 0.2 × L / n_part^(1/3)
-            let b        = 0.2 * box_size / (self.config.particles.n_part as Real).cbrt();
-            let groups   = friends_of_friends(&parts.pos, b, box_size);
-            let h        = self.config.cosmology.h;
+            let b = 0.2 * box_size / (self.config.particles.n_part as Real).cbrt();
+            let groups = friends_of_friends(&parts.pos, b, box_size);
+            let h = self.config.cosmology.h;
 
             // High mass: M > 10^13.5 M_sun/h
             let (r, rg, t, rd, ct, nh) = stacked_profiles(
-                &parts.pos, &self.scratch.gas_rho, &self.scratch.gas_u,
-                n_grid, box_size, parts.mass,
-                self.config.cosmology.omega_m, h,
-                10.0_f64.powf(13.5), Real::MAX, &groups,
+                &parts.pos,
+                &self.scratch.gas_rho,
+                &self.scratch.gas_u,
+                n_grid,
+                box_size,
+                parts.mass,
+                self.config.cosmology.omega_m,
+                h,
+                10.0_f64.powf(13.5),
+                Real::MAX,
+                &groups,
             );
             write_profiles(
                 &format!("{dir}/halo_profiles_highmass_{idx:04}.txt"),
-                &r, &rg, &t, &rd, &ct, nh, "M>10^13.5",
+                &r,
+                &rg,
+                &t,
+                &rd,
+                &ct,
+                nh,
+                "M>10^13.5",
             );
 
             // Low mass: M < 10^12 M_sun/h
             let (r, rg, t, rd, ct, nh) = stacked_profiles(
-                &parts.pos, &self.scratch.gas_rho, &self.scratch.gas_u,
-                n_grid, box_size, parts.mass,
-                self.config.cosmology.omega_m, h,
-                0.0, 10.0_f64.powf(12.0), &groups,
+                &parts.pos,
+                &self.scratch.gas_rho,
+                &self.scratch.gas_u,
+                n_grid,
+                box_size,
+                parts.mass,
+                self.config.cosmology.omega_m,
+                h,
+                0.0,
+                10.0_f64.powf(12.0),
+                &groups,
             );
             write_profiles(
                 &format!("{dir}/halo_profiles_lowmass_{idx:04}.txt"),
-                &r, &rg, &t, &rd, &ct, nh, "M<10^12",
+                &r,
+                &rg,
+                &t,
+                &rd,
+                &ct,
+                nh,
+                "M<10^12",
             );
         }
 
@@ -793,11 +861,7 @@ impl Simulation {
         use crate::analysis::power_spectrum::compute_power_spectrum;
         let n_grid = self.config.run.n_grid as usize;
         let ps = compute_power_spectrum(
-            parts,
-            n_grid,
-            self.a,
-            self.step,
-            40,   // 40 log-spaced k bins
+            parts, n_grid, self.a, self.step, 40,   // 40 log-spaced k bins
             true, // subtract shot-noise
         );
         let pk_path = format!("{dir}/power_spectrum_{idx:04}.txt");

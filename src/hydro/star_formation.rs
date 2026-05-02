@@ -3,9 +3,9 @@
 //! Cells denser than ρ_SF and cooler than T_SF spawn star particles with
 //! probability p = 1 − exp(−ε_SF × Δt / t_ff).
 
-use crate::utils::types::Real;
 use crate::hydro::ic::temperature_from_u;
 use crate::simulation::StarParticle;
+use crate::utils::types::Real;
 
 /// Free-fall time t_ff = √(3π / (32 G ρ_phys)) [seconds].
 ///
@@ -21,8 +21,8 @@ fn free_fall_time_s(gas_rho: Real, omega_m: Real, h: Real) -> Real {
 /// Convert number density threshold from H/cm³ to code units (ρ_gas / ρ̄_matter).
 pub fn rho_sf_code(rho_sf_h_cm3: Real, omega_m: Real, h: Real) -> Real {
     let rho_bar_cgs = 9.47e-30 * omega_m * h * h;
-    let m_p_cgs     = 1.673e-24_f64;
-    let rho_sf_cgs  = rho_sf_h_cm3 * m_p_cgs;
+    let m_p_cgs = 1.673e-24_f64;
+    let rho_sf_cgs = rho_sf_h_cm3 * m_p_cgs;
     rho_sf_cgs / rho_bar_cgs
 }
 
@@ -37,13 +37,13 @@ pub fn rho_sf_code(rho_sf_h_cm3: Real, omega_m: Real, h: Real) -> Real {
 pub fn form_stars(
     gas_rho: &mut [Real],
     gas_vel: &[[Real; 3]],
-    gas_u:   &[Real],
+    gas_u: &[Real],
     cell_positions: &[[Real; 3]],
     m_cell: Real,
     rho_sf: Real,
-    t_sf:   Real,
+    t_sf: Real,
     eps_sf: Real,
-    dt:     Real,
+    dt: Real,
     omega_m: Real,
     h: Real,
     step_id: u64,
@@ -53,23 +53,27 @@ pub fn form_stars(
     let mut new_stars = Vec::new();
 
     for i in 0..gas_rho.len() {
-        if gas_rho[i] < rho_sf { continue; }
+        if gas_rho[i] < rho_sf {
+            continue;
+        }
         let t_k = temperature_from_u(gas_u[i]);
-        if t_k > t_sf { continue; }
+        if t_k > t_sf {
+            continue;
+        }
 
         let t_ff = free_fall_time_s(gas_rho[i], omega_m, h);
         let prob = 1.0 - (-eps_sf * dt_s / t_ff).exp();
 
         // Deterministic pseudo-random: hash cell index and step
         let hash = ((i as u64).wrapping_mul(2654435761) ^ step_id.wrapping_mul(2246822519)) as f64
-                   / u64::MAX as f64;
+            / u64::MAX as f64;
         if hash < prob {
             let star_mass = gas_rho[i] * m_cell * 0.5;
             gas_rho[i] *= 0.5;
             new_stars.push(StarParticle {
-                pos:   cell_positions[i],
-                vel:   gas_vel[i],
-                mass:  star_mass,
+                pos: cell_positions[i],
+                vel: gas_vel[i],
+                mass: star_mass,
                 age_a: 0.0, // filled in by caller with current scale factor
             });
         }
@@ -96,7 +100,9 @@ mod tests {
         let u: Vec<f64> = vec![crate::hydro::ic::u_from_temperature(100.0); n];
         let pos = vec![[0.0f64; 3]; n];
         let rho_sf = rho_sf_code(0.1, 0.3, 0.67);
-        let stars = form_stars(&mut rho, &vel, &u, &pos, 1e8, rho_sf, 2e4, 0.01, 0.01, 0.3, 0.67, 0);
+        let stars = form_stars(
+            &mut rho, &vel, &u, &pos, 1e8, rho_sf, 2e4, 0.01, 0.01, 0.3, 0.67, 0,
+        );
         assert!(stars.is_empty(), "formed stars below threshold");
     }
 }

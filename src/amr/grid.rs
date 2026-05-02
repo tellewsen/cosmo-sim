@@ -12,7 +12,7 @@
 //!   - scalar field χ (symmetron / f_R)
 //!   - fifth-force acceleration
 
-use crate::utils::types::{Real, Level};
+use crate::utils::types::{Level, Real};
 
 // ── Oct ───────────────────────────────────────────────────────────────────────
 
@@ -20,13 +20,13 @@ use crate::utils::types::{Real, Level};
 #[derive(Debug, Clone)]
 pub struct Oct {
     /// Index of the parent cell (coarser level)
-    pub parent:   usize,
+    pub parent: usize,
     /// Indices of the 8 child cells (bit-mask: child i has offset (i&1, i&2, i&4))
     pub children: [usize; 8],
     /// Level of the children
-    pub level:    Level,
+    pub level: Level,
     /// Centre position of the oct  [Mpc/h]
-    pub centre:   [Real; 3],
+    pub centre: [Real; 3],
 }
 
 // ── Cell ──────────────────────────────────────────────────────────────────────
@@ -35,27 +35,27 @@ pub struct Oct {
 #[derive(Debug, Clone)]
 pub struct Cell {
     /// Cell-centre position  [Mpc/h]
-    pub pos:        [Real; 3],
+    pub pos: [Real; 3],
     /// Cell width  [Mpc/h]
-    pub dx:         Real,
+    pub dx: Real,
     /// Refinement level (0 = domain grid)
-    pub level:      Level,
+    pub level: Level,
     /// Index of child oct, or `usize::MAX` for a leaf
-    pub child_oct:  usize,
+    pub child_oct: usize,
     /// Index of parent oct, or `usize::MAX` for domain cells
     pub parent_oct: usize,
 
     // ── Physical fields ───────────────────────────────────────────────────
     /// Matter density  ρ/ρ̄
-    pub rho:         Real,
+    pub rho: Real,
     /// Gravitational potential  Φ  [internal units]
-    pub phi:         Real,
+    pub phi: Real,
     /// Gravitational acceleration  g = −∇Φ
-    pub grav:        [Real; 3],
+    pub grav: [Real; 3],
     /// Scalar field value χ (dimensionless)
-    pub scalar:      Real,
+    pub scalar: Real,
     /// Scalar field velocity χ̇  (non-static mode)
-    pub scalar_dot:  Real,
+    pub scalar_dot: Real,
     /// Fifth-force acceleration
     pub fifth_force: [Real; 3],
 }
@@ -63,20 +63,31 @@ pub struct Cell {
 impl Default for Cell {
     fn default() -> Self {
         Self {
-            pos: [0.0; 3], dx: 0.0, level: 0,
-            child_oct: usize::MAX, parent_oct: usize::MAX,
-            rho: 1.0, phi: 0.0, grav: [0.0; 3],
-            scalar: 0.0, scalar_dot: 0.0, fifth_force: [0.0; 3],
+            pos: [0.0; 3],
+            dx: 0.0,
+            level: 0,
+            child_oct: usize::MAX,
+            parent_oct: usize::MAX,
+            rho: 1.0,
+            phi: 0.0,
+            grav: [0.0; 3],
+            scalar: 0.0,
+            scalar_dot: 0.0,
+            fifth_force: [0.0; 3],
         }
     }
 }
 
 impl Cell {
     #[inline]
-    pub fn is_leaf(&self) -> bool { self.child_oct == usize::MAX }
+    pub fn is_leaf(&self) -> bool {
+        self.child_oct == usize::MAX
+    }
 
     #[inline]
-    pub fn volume(&self) -> Real { self.dx * self.dx * self.dx }
+    pub fn volume(&self) -> Real {
+        self.dx * self.dx * self.dx
+    }
 }
 
 // ── AMR grid ──────────────────────────────────────────────────────────────────
@@ -84,25 +95,25 @@ impl Cell {
 /// Full AMR hierarchy: domain grid + all refined cells.
 pub struct AmrGrid {
     /// All cells, all levels, flat storage
-    pub cells:       Vec<Cell>,
+    pub cells: Vec<Cell>,
     /// All octs, flat storage
-    pub octs:        Vec<Oct>,
+    pub octs: Vec<Oct>,
     /// Starting cell index for each level
     pub level_start: Vec<usize>,
     /// Number of domain cells per dimension
-    pub n_domain:    u32,
+    pub n_domain: u32,
     /// Maximum allowed refinement level
-    pub levelmax:    Level,
+    pub levelmax: Level,
     /// Comoving box side length  [Mpc/h]
-    pub box_size:    Real,
+    pub box_size: Real,
 }
 
 impl AmrGrid {
     /// Build a uniform domain grid of size `n × n × n`.
     pub fn new_uniform(n: u32, levelmax: Level, box_size: Real) -> Self {
         let n_us = n as usize;
-        let dx   = box_size / n as Real;
-        let n3   = n_us * n_us * n_us;
+        let dx = box_size / n as Real;
+        let n3 = n_us * n_us * n_us;
         let mut cells = Vec::with_capacity(n3 * 2);
 
         // C-order (row-major): flat index = i*n² + j*n + k → loop i (slow) → k (fast)
@@ -125,8 +136,8 @@ impl AmrGrid {
 
         Self {
             level_start: vec![0],
-            octs:        Vec::new(),
-            n_domain:    n,
+            octs: Vec::new(),
+            n_domain: n,
             levelmax,
             box_size,
             cells,
@@ -141,7 +152,9 @@ impl AmrGrid {
 
     /// Total number of cells.
     #[inline]
-    pub fn n_cells(&self) -> usize { self.cells.len() }
+    pub fn n_cells(&self) -> usize {
+        self.cells.len()
+    }
 
     /// Number of leaf cells.
     pub fn n_leaves(&self) -> usize {
@@ -157,17 +170,13 @@ impl AmrGrid {
 
     /// Flag cells for refinement where the particle count exceeds `threshold`.
     /// Returns the number of flagged cells.
-    pub fn flag_by_particle_count(
-        &mut self,
-        particle_counts: &[u32],
-        threshold:       u32,
-    ) -> usize {
+    pub fn flag_by_particle_count(&mut self, particle_counts: &[u32], threshold: u32) -> usize {
         let mut count = 0;
         for (idx, cell) in self.cells.iter_mut().enumerate() {
             if cell.is_leaf()
-               && cell.level < self.levelmax
-               && idx < particle_counts.len()
-               && particle_counts[idx] > threshold
+                && cell.level < self.levelmax
+                && idx < particle_counts.len()
+                && particle_counts[idx] > threshold
             {
                 cell.child_oct = usize::MAX - 1; // flag
                 count += 1;
@@ -178,49 +187,68 @@ impl AmrGrid {
 
     /// Refine all flagged cells.  Adds 8 children per flagged cell.
     pub fn refine_flagged(&mut self) {
-        let flagged: Vec<usize> = self.cells.iter().enumerate()
+        let flagged: Vec<usize> = self
+            .cells
+            .iter()
+            .enumerate()
             .filter(|(_, c)| c.child_oct == usize::MAX - 1)
             .map(|(i, _)| i)
             .collect();
 
         for parent_idx in flagged {
             let child_level = self.cells[parent_idx].level + 1;
-            if child_level > self.levelmax { continue; }
+            if child_level > self.levelmax {
+                continue;
+            }
 
-            let dx_child   = self.dx_at_level(child_level);
+            let dx_child = self.dx_at_level(child_level);
             let parent_pos = self.cells[parent_idx].pos;
-            let parent_dx  = self.cells[parent_idx].dx;
-            let oct_idx    = self.octs.len();
+            let parent_dx = self.cells[parent_idx].dx;
+            let oct_idx = self.octs.len();
 
             let mut child_indices = [0_usize; 8];
             for bit in 0_u8..8 {
-                let ox = if bit & 1 != 0 {  0.25 * parent_dx } else { -0.25 * parent_dx };
-                let oy = if bit & 2 != 0 {  0.25 * parent_dx } else { -0.25 * parent_dx };
-                let oz = if bit & 4 != 0 {  0.25 * parent_dx } else { -0.25 * parent_dx };
+                let ox = if bit & 1 != 0 {
+                    0.25 * parent_dx
+                } else {
+                    -0.25 * parent_dx
+                };
+                let oy = if bit & 2 != 0 {
+                    0.25 * parent_dx
+                } else {
+                    -0.25 * parent_dx
+                };
+                let oz = if bit & 4 != 0 {
+                    0.25 * parent_dx
+                } else {
+                    -0.25 * parent_dx
+                };
 
                 let child_idx = self.cells.len();
                 child_indices[bit as usize] = child_idx;
 
                 // Inherit parent field values as initial guess
-                let rho    = self.cells[parent_idx].rho;
-                let phi    = self.cells[parent_idx].phi;
+                let rho = self.cells[parent_idx].rho;
+                let phi = self.cells[parent_idx].phi;
                 let scalar = self.cells[parent_idx].scalar;
 
                 self.cells.push(Cell {
-                    pos:        [parent_pos[0]+ox, parent_pos[1]+oy, parent_pos[2]+oz],
-                    dx:         dx_child,
-                    level:      child_level,
+                    pos: [parent_pos[0] + ox, parent_pos[1] + oy, parent_pos[2] + oz],
+                    dx: dx_child,
+                    level: child_level,
                     parent_oct: oct_idx,
-                    rho, phi, scalar,
+                    rho,
+                    phi,
+                    scalar,
                     ..Default::default()
                 });
             }
 
             self.octs.push(Oct {
-                parent:   parent_idx,
+                parent: parent_idx,
                 children: child_indices,
-                level:    child_level,
-                centre:   parent_pos,
+                level: child_level,
+                centre: parent_pos,
             });
 
             self.cells[parent_idx].child_oct = oct_idx;
@@ -285,8 +313,11 @@ pub mod tests {
         let dx = l / n as Real;
         for cell in &g.cells {
             for d in 0..3 {
-                assert!(cell.pos[d] >= 0.0 && cell.pos[d] < l,
-                        "pos[{d}]={} out of [0,{l})", cell.pos[d]);
+                assert!(
+                    cell.pos[d] >= 0.0 && cell.pos[d] < l,
+                    "pos[{d}]={} out of [0,{l})",
+                    cell.pos[d]
+                );
             }
         }
         // First cell should be at (dx/2, dx/2, dx/2)
@@ -308,7 +339,7 @@ pub mod tests {
         g.cells[0].child_oct = usize::MAX - 1;
         g.refine_flagged();
         // Should have 4³ + 8 cells now
-        assert_eq!(g.n_cells(), 4*4*4 + 8, "Expected domain + 8 children");
+        assert_eq!(g.n_cells(), 4 * 4 * 4 + 8, "Expected domain + 8 children");
         assert_eq!(g.octs.len(), 1, "Expected one oct");
         assert!(!g.cells[0].is_leaf(), "Parent should not be a leaf");
         // All 8 children should be leaves

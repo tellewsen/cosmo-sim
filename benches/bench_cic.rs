@@ -1,8 +1,8 @@
 //! Benchmarks for CIC density assignment and force interpolation.
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
 use cosmo_sim::particles::particles::Particles;
 use cosmo_sim::utils::types::Real;
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 fn make_particles(n: usize, l: Real) -> Particles {
     use std::f64::consts::PI;
@@ -37,8 +37,10 @@ fn bench_cic_density(c: &mut Criterion) {
 
 fn bench_cic_interp(c: &mut Criterion) {
     let ng = 32_usize;
-    let p  = make_particles(32768, ng as Real);
-    let grid: Vec<[Real; 3]> = (0..ng*ng*ng).map(|i| [(i as Real * 0.001).sin(); 3]).collect();
+    let p = make_particles(32768, ng as Real);
+    let grid: Vec<[Real; 3]> = (0..ng * ng * ng)
+        .map(|i| [(i as Real * 0.001).sin(); 3])
+        .collect();
     c.bench_function("cic_interp_32k/ng=32", |b| {
         b.iter(|| p.cic_interpolate_force(&grid, ng))
     });

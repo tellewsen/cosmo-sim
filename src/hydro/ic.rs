@@ -28,20 +28,20 @@ pub fn temperature_from_u(u: Real) -> Real {
 /// `omega_b`, `omega_m` — baryon and matter density fractions
 /// `t_init_k` — initial gas temperature [K] (use 100 K for cold start)
 pub fn init_gas_from_dm(
-    rho_dm:  &[Real],
+    rho_dm: &[Real],
     omega_b: Real,
     omega_m: Real,
     t_init_k: Real,
     gas_rho: &mut [Real],
     gas_vel: &mut [[Real; 3]],
-    gas_u:   &mut [Real],
+    gas_u: &mut [Real],
 ) {
     let frac = omega_b / omega_m;
-    let u0   = u_from_temperature(t_init_k);
+    let u0 = u_from_temperature(t_init_k);
     for i in 0..rho_dm.len() {
         gas_rho[i] = (rho_dm[i] * frac).max(1e-30);
         gas_vel[i] = [0.0, 0.0, 0.0];
-        gas_u[i]   = u0;
+        gas_u[i] = u0;
     }
 }
 
@@ -64,7 +64,7 @@ mod tests {
         let rho_dm = vec![1.0f64; n * n * n];
         let mut rho = vec![0.0f64; n * n * n];
         let mut vel = vec![[0.0f64; 3]; n * n * n];
-        let mut u   = vec![0.0f64; n * n * n];
+        let mut u = vec![0.0f64; n * n * n];
         init_gas_from_dm(&rho_dm, 0.05, 0.30, 100.0, &mut rho, &mut vel, &mut u);
         let frac = 0.05 / 0.30;
         for &r in &rho {

@@ -1,6 +1,6 @@
 [package]
 name = "cosmo_sim"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 authors = ["Based on ISIS/RAMSES by Llinares, Mota & Winther (2014), UiO"]
 description = "Cosmological N-body simulation with modified gravity scalar field support"

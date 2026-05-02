@@ -76,7 +76,7 @@ mod tests {
         assert_eq!(idx3(0, 0, 1, n), 1);
         assert_eq!(idx3(0, 1, 0, n), 4);
         assert_eq!(idx3(1, 0, 0, n), 16);
-        assert_eq!(idx3(n-1, n-1, n-1, n), n*n*n - 1);
+        assert_eq!(idx3(n - 1, n - 1, n - 1, n), n * n * n - 1);
     }
 
     #[test]
@@ -84,14 +84,14 @@ mod tests {
         let n = 4_usize;
         // Periodic: idx3p(-1, 0, 0, 4) = idx3(3, 0, 0, 4) = 48
         assert_eq!(idx3p(-1, 0, 0, n), idx3(3, 0, 0, n));
-        assert_eq!(idx3p(4,  0, 0, n), idx3(0, 0, 0, n));
-        assert_eq!(idx3p(0,  0, -1, n), idx3(0, 0, 3, n));
+        assert_eq!(idx3p(4, 0, 0, n), idx3(0, 0, 0, n));
+        assert_eq!(idx3p(0, 0, -1, n), idx3(0, 0, 3, n));
     }
 
     #[test]
     fn round_trip_flat() {
         let n = 5_usize;
-        for c in 0..n*n*n {
+        for c in 0..n * n * n {
             let (i, j, k) = from_flat(c, n);
             assert_eq!(idx3(i, j, k, n), c);
         }

@@ -113,15 +113,9 @@ impl MpiContext {
     /// For periodic boundaries, rank 0's left neighbour is rank (size-1)
     /// and rank (size-1)'s right neighbour is rank 0.
     #[cfg(feature = "mpi")]
-    pub fn exchange_halos(
-        &self,
-        grid: &mut [Real],
-        n_local_i: usize,
-        n: usize,
-        n_ghost: usize,
-    ) {
-        use ::mpi::traits::Communicator;
+    pub fn exchange_halos(&self, grid: &mut [Real], n_local_i: usize, n: usize, n_ghost: usize) {
         use ::mpi::point_to_point as p2p;
+        use ::mpi::traits::Communicator;
 
         let universe = unsafe {
             // SAFETY: we only access the world communicator which is valid
@@ -133,8 +127,16 @@ impl MpiContext {
         let slab_size = n * n; // one i-layer = n*n cells
         let ghost_count = n_ghost * slab_size;
 
-        let left_rank = if self.rank == 0 { self.size - 1 } else { self.rank - 1 };
-        let right_rank = if self.rank == self.size - 1 { 0 } else { self.rank + 1 };
+        let left_rank = if self.rank == 0 {
+            self.size - 1
+        } else {
+            self.rank - 1
+        };
+        let right_rank = if self.rank == self.size - 1 {
+            0
+        } else {
+            self.rank + 1
+        };
 
         let left_proc = world.process_at_rank(left_rank as i32);
         let right_proc = world.process_at_rank(right_rank as i32);
@@ -200,19 +202,25 @@ impl MpiContext {
         n_global: usize,
         box_size: Real,
     ) {
-        use ::mpi::traits::Communicator;
         use ::mpi::point_to_point as p2p;
+        use ::mpi::traits::Communicator;
 
-        let universe = unsafe {
-            &*(&self._universe as *const ::mpi::environment::Universe)
-        };
+        let universe = unsafe { &*(&self._universe as *const ::mpi::environment::Universe) };
         let world = universe.world();
 
         let x_lo = self.x_lo(n_global, box_size);
         let x_hi = self.x_hi(n_global, box_size);
 
-        let left_rank = if self.rank == 0 { self.size - 1 } else { self.rank - 1 };
-        let right_rank = if self.rank == self.size - 1 { 0 } else { self.rank + 1 };
+        let left_rank = if self.rank == 0 {
+            self.size - 1
+        } else {
+            self.rank - 1
+        };
+        let right_rank = if self.rank == self.size - 1 {
+            0
+        } else {
+            self.rank + 1
+        };
 
         // Partition particles into: keep, send-left, send-right.
         let mut keep_pos = Vec::with_capacity(pos.len());
@@ -254,28 +262,48 @@ impl MpiContext {
         let right_proc = world.process_at_rank(right_rank as i32);
 
         let send_right = flatten(&right_pos, &right_vel);
-        let send_left  = flatten(&left_pos,  &left_vel);
+        let send_left = flatten(&left_pos, &left_vel);
 
         // Step 1: exchange counts so each side knows how big a buffer to allocate.
         let right_count = send_right.len() as i64;
-        let left_count  = send_left.len()  as i64;
-        let mut recv_from_left_count  = 0i64;
+        let left_count = send_left.len() as i64;
+        let mut recv_from_left_count = 0i64;
         let mut recv_from_right_count = 0i64;
-        p2p::send_receive_into(&right_count, &right_proc, &mut recv_from_left_count,  &left_proc);
-        p2p::send_receive_into(&left_count,  &left_proc,  &mut recv_from_right_count, &right_proc);
+        p2p::send_receive_into(
+            &right_count,
+            &right_proc,
+            &mut recv_from_left_count,
+            &left_proc,
+        );
+        p2p::send_receive_into(
+            &left_count,
+            &left_proc,
+            &mut recv_from_right_count,
+            &right_proc,
+        );
 
         // Step 2: exchange the actual particle data.
         let mut recv_from_right = vec![0.0_f64; recv_from_right_count as usize];
-        let mut recv_from_left  = vec![0.0_f64; recv_from_left_count  as usize];
-        p2p::send_receive_into(&send_right[..], &right_proc, &mut recv_from_left[..],  &left_proc);
-        p2p::send_receive_into(&send_left[..],  &left_proc,  &mut recv_from_right[..], &right_proc);
+        let mut recv_from_left = vec![0.0_f64; recv_from_left_count as usize];
+        p2p::send_receive_into(
+            &send_right[..],
+            &right_proc,
+            &mut recv_from_left[..],
+            &left_proc,
+        );
+        p2p::send_receive_into(
+            &send_left[..],
+            &left_proc,
+            &mut recv_from_right[..],
+            &right_proc,
+        );
 
         // Unpack received particles.
         let unflatten = |buf: &[Real], p: &mut Vec<[Real; 3]>, v: &mut Vec<[Real; 3]>| {
             let n = buf.len() / 6;
             for i in 0..n {
-                p.push([buf[i*6], buf[i*6+1], buf[i*6+2]]);
-                v.push([buf[i*6+3], buf[i*6+4], buf[i*6+5]]);
+                p.push([buf[i * 6], buf[i * 6 + 1], buf[i * 6 + 2]]);
+                v.push([buf[i * 6 + 3], buf[i * 6 + 4], buf[i * 6 + 5]]);
             }
         };
 
@@ -337,9 +365,9 @@ impl MpiContext {
     /// assembled on one rank.
     #[cfg(feature = "mpi")]
     pub fn gather_to_root(&self, local: &[Real]) -> Option<Vec<Real>> {
-        use ::mpi::traits::Communicator;
         use ::mpi::collective::{CommunicatorCollectives, Root};
         use ::mpi::datatype::PartitionMut;
+        use ::mpi::traits::Communicator;
 
         let world = self._universe.world();
         let root_proc = world.process_at_rank(0);
@@ -351,15 +379,16 @@ impl MpiContext {
 
         if self.is_root() {
             let total: usize = all_counts.iter().map(|&c| c as usize).sum();
-            let displs: Vec<i32> = all_counts.iter()
-                .scan(0i32, |acc, &c| { let d = *acc; *acc += c; Some(d) })
+            let displs: Vec<i32> = all_counts
+                .iter()
+                .scan(0i32, |acc, &c| {
+                    let d = *acc;
+                    *acc += c;
+                    Some(d)
+                })
                 .collect();
             let mut gathered = vec![0.0_f64; total];
-            let mut partition = PartitionMut::new(
-                &mut gathered[..],
-                &all_counts[..],
-                &displs[..],
-            );
+            let mut partition = PartitionMut::new(&mut gathered[..], &all_counts[..], &displs[..]);
             root_proc.gather_varcount_into_root(local, &mut partition);
             Some(gathered)
         } else {
@@ -397,8 +426,12 @@ impl MpiContext {
             let mut all_pos = Vec::with_capacity(n);
             let mut all_vel = Vec::with_capacity(n);
             for i in 0..n {
-                all_pos.push([gathered[i*6], gathered[i*6+1], gathered[i*6+2]]);
-                all_vel.push([gathered[i*6+3], gathered[i*6+4], gathered[i*6+5]]);
+                all_pos.push([gathered[i * 6], gathered[i * 6 + 1], gathered[i * 6 + 2]]);
+                all_vel.push([
+                    gathered[i * 6 + 3],
+                    gathered[i * 6 + 4],
+                    gathered[i * 6 + 5],
+                ]);
             }
             (all_pos, all_vel)
         })
@@ -406,6 +439,7 @@ impl MpiContext {
 
     /// Non-MPI stub: single rank already has all particles.
     #[cfg(not(feature = "mpi"))]
+    #[allow(clippy::type_complexity)]
     pub fn gather_particles_to_root(
         &self,
         pos: &[[Real; 3]],
@@ -433,36 +467,47 @@ impl MpiContext {
             return; // Single MPI rank: CIC already wrote the complete density.
         }
 
-        use ::mpi::traits::Communicator;
         use ::mpi::point_to_point as p2p;
+        use ::mpi::traits::Communicator;
 
-        let universe = unsafe {
-            &*(&self._universe as *const ::mpi::environment::Universe)
-        };
+        let universe = unsafe { &*(&self._universe as *const ::mpi::environment::Universe) };
         let world = universe.world();
 
         let i_lo = self.slab_start(n);
         let i_hi = self.slab_end(n);
         let n2 = n * n;
 
-        let left_rank  = if self.rank == 0 { self.size - 1 } else { self.rank - 1 };
-        let right_rank = if self.rank == self.size - 1 { 0 } else { self.rank + 1 };
-        let left_proc  = world.process_at_rank(left_rank  as i32);
+        let left_rank = if self.rank == 0 {
+            self.size - 1
+        } else {
+            self.rank - 1
+        };
+        let right_rank = if self.rank == self.size - 1 {
+            0
+        } else {
+            self.rank + 1
+        };
+        let left_proc = world.process_at_rank(left_rank as i32);
         let right_proc = world.process_at_rank(right_rank as i32);
 
         // Left ghost: rank r's CIC deposit into cell (i_lo − 1) mod n.
         let left_ghost = (i_lo + n - 1) % n;
-        let send_left  = rho[left_ghost * n2..(left_ghost + 1) * n2].to_vec();
+        let send_left = rho[left_ghost * n2..(left_ghost + 1) * n2].to_vec();
 
         // Right ghost: rank r's CIC deposit into cell i_hi mod n.
         let right_ghost = i_hi % n;
-        let send_right  = rho[right_ghost * n2..(right_ghost + 1) * n2].to_vec();
+        let send_right = rho[right_ghost * n2..(right_ghost + 1) * n2].to_vec();
 
         // Exchange 1: send left spillover to left neighbour;
         //             receive right neighbour's left spillover → add to our right boundary cell.
         // Right neighbour's left spillover lands in cell (i_lo_{r+1} − 1) = i_hi − 1.
         let mut recv_from_right = vec![0.0_f64; n2];
-        p2p::send_receive_into(&send_left[..], &left_proc, &mut recv_from_right[..], &right_proc);
+        p2p::send_receive_into(
+            &send_left[..],
+            &left_proc,
+            &mut recv_from_right[..],
+            &right_proc,
+        );
         let right_boundary = i_hi - 1; // always valid: i_hi ≥ 1
         for j in 0..n2 {
             rho[right_boundary * n2 + j] += recv_from_right[j];
@@ -472,7 +517,12 @@ impl MpiContext {
         //             receive left neighbour's right spillover → add to our left boundary cell.
         // Left neighbour's right spillover lands in cell i_hi_{r-1} = i_lo.
         let mut recv_from_left = vec![0.0_f64; n2];
-        p2p::send_receive_into(&send_right[..], &right_proc, &mut recv_from_left[..], &left_proc);
+        p2p::send_receive_into(
+            &send_right[..],
+            &right_proc,
+            &mut recv_from_left[..],
+            &left_proc,
+        );
         for j in 0..n2 {
             rho[i_lo * n2 + j] += recv_from_left[j];
         }
@@ -512,9 +562,7 @@ impl MpiContext {
         use ::mpi::collective::CommunicatorCollectives;
         use ::mpi::datatype::PartitionMut;
 
-        let universe = unsafe {
-            &*(&self._universe as *const ::mpi::environment::Universe)
-        };
+        let universe = unsafe { &*(&self._universe as *const ::mpi::environment::Universe) };
         let world = universe.world();
 
         let n_local = self.slab_count(n) * n * n;
@@ -532,11 +580,7 @@ impl MpiContext {
         }
 
         let mut global = vec![0.0_f64; n * n * n];
-        let mut partition = PartitionMut::new(
-            &mut global[..],
-            &recv_counts[..],
-            &recv_displs[..],
-        );
+        let mut partition = PartitionMut::new(&mut global[..], &recv_counts[..], &recv_displs[..]);
         world.all_gather_varcount_into(local, &mut partition);
         global
     }
@@ -564,9 +608,7 @@ impl MpiContext {
     /// `n` is the global grid size (cubic grid assumed: same in all three dims).
     #[cfg(feature = "mpi")]
     pub fn transpose_i_to_j(&self, local_data: &[Real], n: usize) -> Vec<Real> {
-        let universe = unsafe {
-            &*(&self._universe as *const ::mpi::environment::Universe)
-        };
+        let universe = unsafe { &*(&self._universe as *const ::mpi::environment::Universe) };
         let world = universe.world();
 
         let n_local_i = self.slab_count(n);
@@ -618,15 +660,12 @@ impl MpiContext {
 
         // All-to-all-v exchange
         {
-            use ::mpi::datatype::{Partition, PartitionMut};
             use ::mpi::collective::CommunicatorCollectives;
+            use ::mpi::datatype::{Partition, PartitionMut};
 
             let send_partition = Partition::new(&send_buf[..], &send_counts[..], &send_displs[..]);
-            let mut recv_partition = PartitionMut::new(
-                &mut recv_buf[..],
-                &recv_counts[..],
-                &recv_displs[..],
-            );
+            let mut recv_partition =
+                PartitionMut::new(&mut recv_buf[..], &recv_counts[..], &recv_displs[..]);
             world.all_to_all_varcount_into(&send_partition, &mut recv_partition);
         }
 
@@ -666,9 +705,7 @@ impl MpiContext {
     /// output has shape `(n_local_i, n, n)`.
     #[cfg(feature = "mpi")]
     pub fn transpose_j_to_i(&self, local_data: &[Real], n: usize) -> Vec<Real> {
-        let universe = unsafe {
-            &*(&self._universe as *const ::mpi::environment::Universe)
-        };
+        let universe = unsafe { &*(&self._universe as *const ::mpi::environment::Universe) };
         let world = universe.world();
 
         let n_local_j = self.slab_count(n);
@@ -718,15 +755,12 @@ impl MpiContext {
         let mut recv_buf = vec![0.0; roffset];
 
         {
-            use ::mpi::datatype::{Partition, PartitionMut};
             use ::mpi::collective::CommunicatorCollectives;
+            use ::mpi::datatype::{Partition, PartitionMut};
 
             let send_partition = Partition::new(&send_buf[..], &send_counts[..], &send_displs[..]);
-            let mut recv_partition = PartitionMut::new(
-                &mut recv_buf[..],
-                &recv_counts[..],
-                &recv_displs[..],
-            );
+            let mut recv_partition =
+                PartitionMut::new(&mut recv_buf[..], &recv_counts[..], &recv_displs[..]);
             world.all_to_all_varcount_into(&send_partition, &mut recv_partition);
         }
 
@@ -844,17 +878,12 @@ mod tests {
     fn transpose_round_trip_single_rank() {
         let ctx = MpiContext::init();
         let n = 8;
-        let data: Vec<Real> = (0..n * n * n)
-            .map(|i| (i as Real).sin())
-            .collect();
+        let data: Vec<Real> = (0..n * n * n).map(|i| (i as Real).sin()).collect();
         let transposed = ctx.transpose_i_to_j(&data, n);
         let recovered = ctx.transpose_j_to_i(&transposed, n);
         assert_eq!(recovered.len(), data.len());
         for (a, b) in data.iter().zip(recovered.iter()) {
-            assert!(
-                (a - b).abs() < 1e-14,
-                "round-trip mismatch: {a} vs {b}"
-            );
+            assert!((a - b).abs() < 1e-14, "round-trip mismatch: {a} vs {b}");
         }
     }
 
