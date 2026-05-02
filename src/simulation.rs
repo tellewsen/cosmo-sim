@@ -798,7 +798,10 @@ impl Simulation {
             log::info!("Gas snapshot {idx:04} → {gas_path}");
 
             // ── Halo profiles ─────────────────────────────────────────────
-            use crate::hydro::profiles::{friends_of_friends, stacked_profiles, write_profiles};
+            use crate::hydro::profiles::{
+                friends_of_friends, halo_mass_function, stacked_profiles, write_mass_function,
+                write_profiles,
+            };
             let n_grid = self.config.run.n_grid as usize;
             let box_size = self.config.run.box_size;
             // Linking length: b = 0.2 × mean inter-particle spacing = 0.2 × L / n_part^(1/3)
@@ -854,6 +857,16 @@ impl Simulation {
                 &ct,
                 nh,
                 "M<10^12",
+            );
+
+            // ── Mass function ─────────────────────────────────────────────
+            let (log_m, dn) = halo_mass_function(&groups, parts.mass, box_size);
+            let n_halos_total = groups.len();
+            write_mass_function(
+                &format!("{dir}/halo_mass_function_{idx:04}.txt"),
+                &log_m,
+                &dn,
+                n_halos_total,
             );
         }
 
