@@ -464,7 +464,7 @@ mod tests {
         // Two groups: one with 100 particles (M=1e11), one with 1000 (M=1e12).
         let m_part = 1.0e9_f64; // M_sun/h per particle
         let groups: Vec<Vec<usize>> = vec![
-            (0..100).collect(),   // M = 1e11
+            (0..100).collect(),    // M = 1e11
             (100..1100).collect(), // M = 1e12
         ];
         let box_size = 64.0_f64;

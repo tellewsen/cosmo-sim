@@ -74,7 +74,7 @@ pub fn cool_cell(gas_rho: Real, u: Real, dt: Real, omega_m: Real, h: Real) -> Re
         }
 
         let du_rate = lam * pre * gas_rho; // (km/s)² / s
-        // Sub-step: at most 10% change in u, at most remaining time
+                                           // Sub-step: at most 10% change in u, at most remaining time
         let dt_sub = (0.1 * u_cur / du_rate).min(t_remaining);
         u_cur = (u_cur - du_rate * dt_sub).max(u_floor);
         t_remaining -= dt_sub;
@@ -154,7 +154,10 @@ mod tests {
         }
 
         let rel_err = (u_big - u_small).abs() / u_small;
-        assert!(rel_err < 0.01, "subcycling vs many-steps: rel_err={rel_err:.4}");
+        assert!(
+            rel_err < 0.01,
+            "subcycling vs many-steps: rel_err={rel_err:.4}"
+        );
     }
 
     #[test]

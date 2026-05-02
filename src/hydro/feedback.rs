@@ -103,7 +103,9 @@ mod tests {
         let gas_rho = make_gas_rho(n);
         let mut gas_u = vec![1.5f64; n * n * n];
         // a_current = 1.0, Δa = 0.0001 → ~1.5 Myr elapsed << 100 Myr delay → not mature
-        supernova_feedback(&mut stars, &gas_rho, &mut gas_u, 1.0, 0.67, 0.3, 1e-5, 100.0, n, 1.0, 4.0);
+        supernova_feedback(
+            &mut stars, &gas_rho, &mut gas_u, 1.0, 0.67, 0.3, 1e-5, 100.0, n, 1.0, 4.0,
+        );
         assert_eq!(stars.len(), 1, "star was consumed before delay");
     }
 
@@ -120,7 +122,9 @@ mod tests {
         let u0 = 1.5_f64;
         let mut gas_u = vec![u0; n * n * n];
         // a_current = 1.0, age = 0 → definitely mature (1.0 Myr << Hubble time)
-        supernova_feedback(&mut stars, &gas_rho, &mut gas_u, 1.0, 0.67, 0.3, 1e-5, 1.0, n, 1.0, 8.0);
+        supernova_feedback(
+            &mut stars, &gas_rho, &mut gas_u, 1.0, 0.67, 0.3, 1e-5, 1.0, n, 1.0, 8.0,
+        );
         assert!(stars.is_empty(), "mature star not consumed");
         let max_u = gas_u.iter().cloned().fold(u0, f64::max);
         assert!(max_u > u0, "no energy deposited");
@@ -141,7 +145,19 @@ mod tests {
             let mut gas_rho = vec![rho_val; n * n * n];
             let u0 = 1.5_f64;
             let mut gas_u = vec![u0; n * n * n];
-            supernova_feedback(&mut stars, &mut gas_rho, &mut gas_u, 1.0, 0.67, 0.3, 1e-5, 1.0, n, 1.0, 8.0);
+            supernova_feedback(
+                &mut stars,
+                &mut gas_rho,
+                &mut gas_u,
+                1.0,
+                0.67,
+                0.3,
+                1e-5,
+                1.0,
+                n,
+                1.0,
+                8.0,
+            );
             // Return the delta-u at the central cell
             let ci = (pos_centre[0] / 8.0 * n as f64) as usize;
             let cj = (pos_centre[1] / 8.0 * n as f64) as usize;
@@ -149,7 +165,7 @@ mod tests {
             gas_u[ci * n * n + cj * n + ck] - u0
         };
 
-        let du_low  = run_star(0.1);
+        let du_low = run_star(0.1);
         let du_high = run_star(0.2);
         // Doubling rho should halve Δu
         let ratio = du_low / du_high;
