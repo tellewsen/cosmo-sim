@@ -36,6 +36,9 @@ jobs:
       - name: clippy --features fofr,hydro
         run: cargo clippy --features fofr,hydro -- -D warnings
 
+      - name: clippy --features fofr,symmetron,hydro
+        run: cargo clippy --features fofr,symmetron,hydro -- -D warnings
+
       - name: test (base)
         run: cargo test
 
@@ -47,3 +50,6 @@ jobs:
 
       - name: test --features hydro
         run: cargo test --features hydro
+
+      - name: test --features fofr,symmetron,hydro
+        run: cargo test --features fofr,symmetron,hydro
