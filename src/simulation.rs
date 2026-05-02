@@ -464,9 +464,11 @@ impl Simulation {
                     let dx = self.config.run.box_size / n as Real;
                     supernova_feedback(
                         &mut self.star_particles,
+                        &self.scratch.gas_rho,
                         &mut self.scratch.gas_u,
                         self.a,
                         self.config.cosmology.h,
+                        self.config.cosmology.omega_m,
                         self.config.hydro.eps_sn,
                         self.config.hydro.t_sn_delay_myr,
                         n,
