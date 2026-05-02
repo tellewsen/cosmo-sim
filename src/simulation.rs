@@ -532,9 +532,9 @@ impl Simulation {
         let sf = &self.config.scalar_field;
 
         #[cfg(feature = "symmetron")]
-        if sf.a_ssb.is_some() {
+        if let Some(a_ssb) = sf.a_ssb {
             let p = SymmetronParams {
-                a_ssb: sf.a_ssb.unwrap(),
+                a_ssb,
                 lambda_0: sf.lambda_0.unwrap_or(1.0),
                 beta_0: sf.beta_0.unwrap_or(1.0),
                 non_static: sf.non_static.unwrap_or(false),

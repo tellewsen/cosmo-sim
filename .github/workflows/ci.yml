@@ -36,5 +36,8 @@ jobs:
       - name: test --features fofr
         run: cargo test --features fofr
 
+      - name: test --features symmetron
+        run: cargo test --features symmetron
+
       - name: test --features hydro
         run: cargo test --features hydro
