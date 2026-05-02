@@ -10,6 +10,7 @@ Usage:
         --dirs output_lcdm output_sym_a \
         --labels "ΛCDM" "Sym A" \
         --mass-bin highmass \
+        --reference-dir analysis/reference \
         --out figures/halo_profiles_highmass.pdf
 """
 
@@ -47,7 +48,6 @@ def parse_profile_file(path: Path):
             if not line:
                 continue
             if line.startswith("#"):
-                # First header: "# mass_bin=...  n_halos=N"
                 m = re.search(r"n_halos=(\d+)", line)
                 if m:
                     n_halos = int(m.group(1))
@@ -62,13 +62,12 @@ def parse_profile_file(path: Path):
         return n_halos, None, None, None, None
 
     arr = np.array(rows)
-    r    = arr[:, 0]
-    rg   = arr[:, 1]
-    t    = arr[:, 2]
-    rd   = arr[:, 3]
-    nc   = arr[:, 4].astype(int)
+    r  = arr[:, 0]
+    rg = arr[:, 1]
+    t  = arr[:, 2]
+    rd = arr[:, 3]
+    nc = arr[:, 4].astype(int)
 
-    # Mask bins with no cells
     mask = nc == 0
     rg[mask] = np.nan
     t[mask]  = np.nan
@@ -77,14 +76,65 @@ def parse_profile_file(path: Path):
     return n_halos, r, rg, t, rd
 
 
+# Label → CSV stem mapping (matches run_ellewsen.sh naming convention)
+_LABEL_TO_VARIANT = {
+    "ΛCDM": "lcdm",
+    "lcdm": "lcdm",
+    "Sym A": "sym_a",
+    "sym_a": "sym_a",
+    "Sym B": "sym_b",
+    "sym_b": "sym_b",
+    "Sym C": "sym_c",
+    "sym_c": "sym_c",
+    "Sym D": "sym_d",
+    "sym_d": "sym_d",
+}
+
+
+def load_reference(ref_dir: Path, label: str, mass_bin: str):
+    """
+    Load Ellewsen et al. (2018) reference curves for a given run label and
+    mass bin.  Returns (r, rho_gas, T_K, rho_dm) arrays, or None if the file
+    does not exist or contains no data rows.
+
+    Expected filename: {ref_dir}/ellewsen2018_{variant}_{mass_bin}.csv
+    CSV columns (space-separated, header lines start with #):
+        r_R200  rho_gas_rho_mean  T_K  rho_dm_rho_mean
+    """
+    variant = _LABEL_TO_VARIANT.get(label)
+    if variant is None:
+        return None
+    path = ref_dir / f"ellewsen2018_{variant}_{mass_bin}.csv"
+    if not path.exists():
+        return None
+
+    rows = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            rows.append([float(x) for x in parts[:4]])
+
+    if not rows:
+        return None
+
+    arr = np.array(rows)
+    return arr[:, 0], arr[:, 1], arr[:, 2], arr[:, 3]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Plot stacked halo profiles from RUSTIS hydro runs")
-    parser.add_argument("--dirs",     nargs="+", required=True,  help="Output directories to plot")
-    parser.add_argument("--labels",   nargs="+", default=None,   help="Legend labels (one per directory)")
-    parser.add_argument("--snapshot", default="0000",            help="4-digit snapshot index (default: 0000)")
-    parser.add_argument("--mass-bin", default="highmass",        choices=["highmass", "lowmass"],
+    parser.add_argument("--dirs",          nargs="+", required=True, help="Output directories to plot")
+    parser.add_argument("--labels",        nargs="+", default=None,  help="Legend labels (one per directory)")
+    parser.add_argument("--snapshot",      default="0000",           help="4-digit snapshot index (default: 0000)")
+    parser.add_argument("--mass-bin",      default="highmass",       choices=["highmass", "lowmass"],
                         help="Which mass bin to plot (default: highmass)")
-    parser.add_argument("--out",      default=None,              help="Output figure path (PDF/PNG)")
+    parser.add_argument("--reference-dir", default=None,             help="Directory with Ellewsen 2018 reference CSVs")
+    parser.add_argument("--out",           default=None,             help="Output figure path (PDF/PNG)")
     args = parser.parse_args()
 
     dirs   = args.dirs
@@ -98,9 +148,11 @@ def main():
     out_path = args.out or f"figures/halo_profiles_{mass_bin}.pdf"
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
+    ref_dir = Path(args.reference_dir) if args.reference_dir else None
+
     filename = f"halo_profiles_{mass_bin}_{snap}.txt"
 
-    # ── Load data ─────────────────────────────────────────────────────────────
+    # ── Load simulation data ──────────────────────────────────────────────────
     datasets = []
     for d, lbl in zip(dirs, labels):
         path = Path(d) / filename
@@ -117,6 +169,7 @@ def main():
 
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 
+    ref_plotted = False
     for (lbl, n_halos, r, rg, t_k, rd), color in zip(datasets, colors):
         if r is None:
             continue
@@ -124,6 +177,18 @@ def main():
         axes[0].plot(r, rg,  label=f"{lbl}  (n={n_halos})", **kw)
         axes[1].plot(r, t_k, label=f"{lbl}  (n={n_halos})", **kw)
         axes[2].plot(r, rd,  label=f"{lbl}  (n={n_halos})", **kw)
+
+        # Overlay paper reference if available
+        if ref_dir is not None:
+            ref = load_reference(ref_dir, lbl, mass_bin)
+            if ref is not None:
+                r_ref, rg_ref, t_ref, rd_ref = ref
+                ref_label = "Ellewsen+18" if not ref_plotted else "_nolegend_"
+                rkw = dict(color=color, lw=1.2, ls="--", alpha=0.7)
+                axes[0].plot(r_ref, rg_ref, label=ref_label, **rkw)
+                axes[1].plot(r_ref, t_ref,  label="_nolegend_", **rkw)
+                axes[2].plot(r_ref, rd_ref, label="_nolegend_", **rkw)
+                ref_plotted = True
 
     # Panel styling
     ylabels = [
@@ -133,7 +198,6 @@ def main():
     ]
     for ax, ylabel in zip(axes, ylabels):
         ax.set_xscale("log")
-        # Only use log y-scale if there are positive values to plot
         lines = ax.get_lines()
         has_positive = any_data and any(
             np.any(np.isfinite(l.get_ydata()) & (np.array(l.get_ydata()) > 0))
@@ -161,7 +225,6 @@ def main():
                     transform=ax.transAxes, ha="center", va="center",
                     fontsize=11, color="gray")
 
-    # Save PDF and PNG
     pdf_path = out_path if out_path.endswith(".pdf") else out_path.rsplit(".", 1)[0] + ".pdf"
     png_path = pdf_path.replace(".pdf", ".png")
     fig.savefig(pdf_path, bbox_inches="tight")
