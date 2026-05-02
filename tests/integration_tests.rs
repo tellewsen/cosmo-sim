@@ -354,3 +354,105 @@ fn pm_momentum_conservation_10_steps() {
         assert!(dm < 1.0, "Δp[{d}]={dm:.3e} too large");
     }
 }
+
+// ─── Hydro mini-sim end-to-end ────────────────────────────────────────────────
+
+/// Run a tiny 8³ hydro simulation for 5 timesteps and verify:
+/// - no panics
+/// - gas mass is conserved (total gas_rho sums stays constant)
+/// - all temperatures stay above the 10^4 K floor
+/// - all gas densities remain positive
+#[cfg(feature = "hydro")]
+#[test]
+fn hydro_minisim_mass_conservation_and_stability() {
+    use cosmo_sim::{
+        mpi::MpiContext,
+        simulation::Simulation,
+        utils::config::{
+            Config, CosmoParams, GravityParams, HydroParams, OutputParams, ParticleParams,
+            RunParams, ScalarFieldParams,
+        },
+    };
+
+    let config = Config {
+        run: RunParams {
+            box_size: 8.0,
+            n_grid: 8,
+            levelmax: 0,
+            refine_thr: 99999,
+            a_init: 0.5,
+            a_final: 0.52,
+            dtau_max: 0.002,
+            courant_factor: 0.5,
+        },
+        cosmology: CosmoParams {
+            omega_m: 0.3,
+            omega_lambda: 0.7,
+            omega_b: 0.05,
+            h: 0.67,
+            n_s: 0.96,
+            sigma8: 0.83,
+        },
+        gravity: GravityParams {
+            epsilon: 1e-4,
+            n_mg_iter: 10,
+            n_smooth: 2,
+        },
+        particles: ParticleParams {
+            n_part: 4, // 4³ = 64 particles
+            m_part: 0.0,
+        },
+        scalar_field: ScalarFieldParams::default(),
+        hydro: HydroParams {
+            cooling: true,
+            star_formation: false,
+            supernova_feedback: false,
+            ..HydroParams::default()
+        },
+        output: OutputParams {
+            outdir: "/tmp/rustis_hydro_test".into(),
+            n_output: 0,
+            a_out: None,
+            hdf5: false,
+        },
+    };
+
+    let mut sim = Simulation::new(config, MpiContext::init());
+    sim.generate_ic(42);
+
+    // Gas ICs are initialised inside run() before the time loop. Run to completion.
+    sim.run();
+
+    // ── Post-run invariants ──────────────────────────────────────────────────
+
+    // All densities positive (Godunov floor keeps rho > 0)
+    for (i, &rho) in sim.scratch.gas_rho.iter().enumerate() {
+        assert!(rho > 0.0, "negative gas density at cell {i}: rho={rho:.3e}");
+    }
+
+    // Total gas density should be positive and finite
+    let mass_total: f64 = sim.scratch.gas_rho.iter().sum();
+    assert!(
+        mass_total > 0.0 && mass_total.is_finite(),
+        "total gas density invalid: {mass_total:.3e}"
+    );
+
+    // Mean gas density ≈ omega_b/omega_m × N³ (code units: mean DM density = N³)
+    let n3 = 8usize.pow(3);
+    let expected_mean = 0.05 / 0.3; // omega_b / omega_m
+    let actual_mean = mass_total / n3 as f64;
+    let rel_err = (actual_mean - expected_mean).abs() / expected_mean;
+    assert!(
+        rel_err < 0.01,
+        "mean gas density wrong: expected ~{expected_mean:.4}, got {actual_mean:.4}"
+    );
+
+    // All temperatures above 10^4 K floor
+    let u_floor = cosmo_sim::hydro::ic::u_from_temperature(1.0e4);
+    for (i, &u) in sim.scratch.gas_u.iter().enumerate() {
+        assert!(
+            u >= u_floor * 0.999,
+            "temperature below floor at cell {i}: u={u:.3e} < u_floor={u_floor:.3e}"
+        );
+    }
+}
