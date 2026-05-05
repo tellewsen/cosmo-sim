@@ -313,6 +313,63 @@ pub fn stacked_profiles(
     (r_mid, rho_gas, t_mean, rho_dm, counts, n_halos)
 }
 
+// ── Halo mass function ────────────────────────────────────────────────────────
+
+const N_MF_BINS: usize = 20;
+
+/// Compute the halo mass function dN/dlog₁₀M [h³/Mpc³] from FoF groups.
+///
+/// Returns `(log10_m_mid, dn_dlgm)` arrays of length `N_MF_BINS`.
+/// Mass range: log₁₀(M/(M_sun/h)) from 10 to 15.
+/// Bins with zero halos have `dn_dlgm = 0`.
+pub fn halo_mass_function(
+    groups: &[Vec<usize>],
+    m_part: Real,
+    box_size: Real,
+) -> ([Real; N_MF_BINS], [Real; N_MF_BINS]) {
+    const LOG_M_MIN: Real = 10.0; // log10(M_sun/h)
+    const LOG_M_MAX: Real = 15.0;
+    let dlgm = (LOG_M_MAX - LOG_M_MIN) / N_MF_BINS as Real;
+    let volume = box_size * box_size * box_size; // (Mpc/h)³
+
+    let mut counts = [0usize; N_MF_BINS];
+    for group in groups {
+        let log_m = (group.len() as Real * m_part).log10();
+        if !(LOG_M_MIN..LOG_M_MAX).contains(&log_m) {
+            continue;
+        }
+        let bin = ((log_m - LOG_M_MIN) / dlgm) as usize;
+        if bin < N_MF_BINS {
+            counts[bin] += 1;
+        }
+    }
+
+    let mut log10_m_mid = [0.0f64; N_MF_BINS];
+    let mut dn_dlgm = [0.0f64; N_MF_BINS];
+    for i in 0..N_MF_BINS {
+        log10_m_mid[i] = LOG_M_MIN + (i as Real + 0.5) * dlgm;
+        dn_dlgm[i] = counts[i] as Real / (volume * dlgm);
+    }
+
+    (log10_m_mid, dn_dlgm)
+}
+
+/// Write mass function to a text file.
+pub fn write_mass_function(
+    path: &str,
+    log10_m_mid: &[Real; N_MF_BINS],
+    dn_dlgm: &[Real; N_MF_BINS],
+    n_halos_total: usize,
+) {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path).expect("Cannot create mass function file");
+    writeln!(f, "# n_halos_total={n_halos_total}").unwrap();
+    writeln!(f, "# log10(M [M_sun/h])  dN/dlog10M [(Mpc/h)^-3]").unwrap();
+    for i in 0..N_MF_BINS {
+        writeln!(f, "{:.4e} {:.4e}", log10_m_mid[i], dn_dlgm[i]).unwrap();
+    }
+}
+
 /// Write profiles to a text file.
 #[allow(clippy::too_many_arguments)]
 pub fn write_profiles(
@@ -400,5 +457,40 @@ mod tests {
         let r_lo = r200(1000, 1e10, 0.7);
         let r_hi = r200(1000, 1e10, 0.67);
         assert!(r_lo < r_hi, "R_200 should decrease with increasing h");
+    }
+
+    #[test]
+    fn mass_function_counts_correctly() {
+        // Two groups: one with 100 particles (M=1e11), one with 1000 (M=1e12).
+        let m_part = 1.0e9_f64; // M_sun/h per particle
+        let groups: Vec<Vec<usize>> = vec![
+            (0..100).collect(),    // M = 1e11
+            (100..1100).collect(), // M = 1e12
+        ];
+        let box_size = 64.0_f64;
+        let (log_m, dn) = halo_mass_function(&groups, m_part, box_size);
+
+        // Find which bins the two halos fall into
+        let bin11 = ((11.0 - 10.0) / ((15.0 - 10.0) / N_MF_BINS as f64)) as usize;
+        let bin12 = ((12.0 - 10.0) / ((15.0 - 10.0) / N_MF_BINS as f64)) as usize;
+        assert!(
+            dn[bin11] > 0.0,
+            "10^11 halo not counted (bin {bin11}, log_m={:.2})",
+            log_m[bin11]
+        );
+        assert!(
+            dn[bin12] > 0.0,
+            "10^12 halo not counted (bin {bin12}, log_m={:.2})",
+            log_m[bin12]
+        );
+        // Bins for halos should be in the expected mass decade
+        assert!((log_m[bin11] - 11.0).abs() < 0.5);
+        assert!((log_m[bin12] - 12.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn mass_function_empty_returns_zeros() {
+        let (_, dn) = halo_mass_function(&[], 1.0e9, 64.0);
+        assert!(dn.iter().all(|&x| x == 0.0));
     }
 }
