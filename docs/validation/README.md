@@ -314,6 +314,7 @@ from a=0.33 to a=1.0.
 - [x] Fix f(R) solver epsilon (1e-5→1e-10) and epoch init (`ade6903`)
 - [x] F5 confirmed resolved: λ_C=10.7 Mpc/h >> dx=3.9 Mpc/h, ΔP/P up to 8% at z=0
 - [ ] F6 rerun with fixed solver (in progress — expected ΔP/P≈0, λ_C=3.4 < dx=3.9)
+- [x] Non-static Symmetron leapfrog implemented (velocity-Verlet χ+χ̇, Hubble damping at a_half)
+- [ ] Validate non-static Symmetron: run with `non_static=true` at 128³ 64 Mpc/h; confirm χ̇ grows after a_SSB and ΔP/P differs from quasi-static baseline
 - [ ] Check symmetron fifth force units (needs resolved run — 128³ or 512³)
 - [ ] Production 512³ runs (250 Mpc/h) for full Winther 2015 comparison
-- [ ] MPI support

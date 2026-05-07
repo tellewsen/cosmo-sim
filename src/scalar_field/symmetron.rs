@@ -342,7 +342,7 @@ fn ngs_sweep(chi: &mut [Real], rho: &[Real], a: Real, dx: Real, n: usize, p: &Sy
 }
 
 /// Pointwise residual of the NGS equation:  r = ∇²χ − f(χ).
-fn residual_chi(
+pub fn residual_chi(
     chi: &[Real],
     rho: &[Real],
     a: Real,

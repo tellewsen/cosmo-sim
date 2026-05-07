@@ -124,7 +124,9 @@ pub struct StarParticle {
 }
 
 #[cfg(feature = "symmetron")]
-use crate::scalar_field::symmetron::{fifth_force_grid, solve_symmetron, SymmetronParams};
+use crate::scalar_field::symmetron::{
+    fifth_force_grid, residual_chi, solve_symmetron, SymmetronParams,
+};
 
 #[cfg(all(feature = "fofr", not(feature = "mpi_parallel")))]
 use crate::scalar_field::fofr::solve_fofr;
@@ -374,7 +376,7 @@ impl Simulation {
             self.grid.set_domain_grav(&self.scratch.grav);
 
             // ── Scalar field ───────────────────────────────────────────────
-            let fifth_grid: Option<Vec<[Real; 3]>> = self.solve_scalar_field(dx, n);
+            let fifth_grid: Option<Vec<[Real; 3]>> = self.solve_scalar_field(dx, n, a_half);
 
             // ── Interpolate forces to particles ────────────────────────────
             let grav_part = self.particles.cic_interpolate_force(&self.scratch.grav, n);
@@ -530,7 +532,7 @@ impl Simulation {
     // ── Scalar field dispatch ─────────────────────────────────────────────────
 
     #[allow(unused_variables)]
-    fn solve_scalar_field(&mut self, dx: Real, n: usize) -> Option<Vec<[Real; 3]>> {
+    fn solve_scalar_field(&mut self, dx: Real, n: usize, a_half: Real) -> Option<Vec<[Real; 3]>> {
         let sf = &self.config.scalar_field;
 
         #[cfg(feature = "symmetron")]
@@ -544,19 +546,59 @@ impl Simulation {
                 max_iter: 150,
                 n_smooth: 2,
             };
-            #[cfg(feature = "mpi_parallel")]
-            let chi_new = {
-                use crate::scalar_field::symmetron::solve_symmetron_mpi;
-                let n_local_i = self.mpi_ctx.slab_count(n);
-                let i0 = self.mpi_ctx.slab_start(n);
-                let rho_slab = &self.scratch.rho[i0 * n * n..(i0 + n_local_i) * n * n];
-                let chi_slab = solve_symmetron_mpi(rho_slab, self.a, dx, n, &p, &self.mpi_ctx);
-                self.mpi_ctx.allgather_slabs(&chi_slab, n)
-            };
 
-            #[cfg(not(feature = "mpi_parallel"))]
-            let chi_new = solve_symmetron(&self.scratch.rho, self.a, dx, n, &p);
-            self.chi.copy_from_slice(&chi_new);
+            if p.non_static {
+                // Non-static mode: velocity-Verlet leapfrog for χ and χ̇.
+                //
+                // EOM: ∂²χ/∂τ² + 3H ∂χ/∂τ = ∇²χ − f(χ)
+                //
+                // At each step Δτ:
+                //   A   = residual − 3H χ̇       (generalised acceleration)
+                //   χ̇  += (Δτ/2) A              (half-kick)
+                //   χ   += Δτ χ̇                 (drift, clamped to [−1,1])
+                //   A'  = residual(χ_new) − 3H χ̇  (re-evaluate at new χ)
+                //   χ̇  += (Δτ/2) A'             (half-kick)
+                let dtau = self.dtau;
+                let h = self.cosmology.hubble(a_half); // H_phys [km/s/Mpc]
+                let damp = 3.0 * h;
+                let n3 = n * n * n;
+
+                // First residual (at χ before this step)
+                let res0 = residual_chi(&self.chi, &self.scratch.rho, a_half, dx, n, &p);
+
+                // Half-kick χ̇
+                for i in 0..n3 {
+                    self.chi_dot[i] += (dtau * 0.5) * (res0[i] - damp * self.chi_dot[i]);
+                }
+
+                // Drift χ
+                for i in 0..n3 {
+                    self.chi[i] = (self.chi[i] + dtau * self.chi_dot[i]).clamp(-1.0, 1.0);
+                }
+
+                // Second residual (at updated χ)
+                let res1 = residual_chi(&self.chi, &self.scratch.rho, a_half, dx, n, &p);
+
+                // Half-kick χ̇
+                for i in 0..n3 {
+                    self.chi_dot[i] += (dtau * 0.5) * (res1[i] - damp * self.chi_dot[i]);
+                }
+            } else {
+                // Quasi-static mode: solve ∇²χ = f(χ) to convergence.
+                #[cfg(feature = "mpi_parallel")]
+                let chi_new = {
+                    use crate::scalar_field::symmetron::solve_symmetron_mpi;
+                    let n_local_i = self.mpi_ctx.slab_count(n);
+                    let i0        = self.mpi_ctx.slab_start(n);
+                    let rho_slab  = &self.scratch.rho[i0 * n * n..(i0 + n_local_i) * n * n];
+                    let chi_slab  = solve_symmetron_mpi(rho_slab, self.a, dx, n, &p, &self.mpi_ctx);
+                    self.mpi_ctx.allgather_slabs(&chi_slab, n)
+                };
+                #[cfg(not(feature = "mpi_parallel"))]
+                let chi_new = solve_symmetron(&self.scratch.rho, self.a, dx, n, &p);
+                self.chi.copy_from_slice(&chi_new);
+            }
+
             let f5_raw = fifth_force_grid(&self.chi, dx, n, self.a, &p);
             self.grid.set_domain_scalar(&self.chi);
             // fifth_force_grid returns (β₀/a)∇χ with χ dimensionless (O(1)) and
@@ -925,5 +967,141 @@ impl Simulation {
         }
         log::info!("Restarted from '{path}': step={step}, a={a:.5}");
         Ok(sim)
+    }
+}
+
+#[cfg(all(test, feature = "symmetron"))]
+mod tests {
+    use super::*;
+    use crate::mpi::MpiContext;
+    use crate::utils::config::{Config, RunParams, CosmoParams, GravityParams,
+                               HydroParams, ParticleParams, ScalarFieldParams, OutputParams};
+
+    fn minimal_config_sym(n: usize, non_static: bool) -> Config {
+        Config {
+            run: RunParams {
+                box_size: 64.0,
+                n_grid: n as u32,
+                levelmax: 0,
+                refine_thr: 99999,
+                a_init: 0.5,
+                a_final: 1.0,
+                dtau_max: 0.01,
+                courant_factor: 0.5,
+            },
+            cosmology: CosmoParams {
+                omega_m: 0.3,
+                omega_lambda: 0.7,
+                omega_b: 0.05,
+                h: 0.67,
+                n_s: 0.96,
+                sigma8: 0.83,
+            },
+            gravity: GravityParams::default(),
+            particles: ParticleParams { n_part: n as u32, m_part: 0.0 },
+            scalar_field: ScalarFieldParams {
+                a_ssb: Some(0.5),
+                lambda_0: Some(1.0),
+                beta_0: Some(1.0),
+                non_static: Some(non_static),
+                epsilon_mg: Some(1e-5),
+                ..Default::default()
+            },
+            output: OutputParams {
+                outdir: "test_out".to_string(),
+                n_output: 0,
+                a_out: None,
+                hdf5: false,
+            },
+            hydro: HydroParams::default(),
+        }
+    }
+
+    #[test]
+    fn non_static_updates_chi_dot_and_chi() {
+        let n = 4_usize;
+        let cfg = minimal_config_sym(n, true);
+        let mpi = MpiContext::init();
+        let mut sim = Simulation::new(cfg, mpi);
+
+        let dx = sim.config.run.box_size / n as Real;
+        let a_half = sim.a; // use a_init for simplicity
+
+        // Set a non-trivial rho (overdense → chi should tend toward 0)
+        sim.scratch.rho.iter_mut().enumerate().for_each(|(i, r)| {
+            *r = 1.0 + 0.1 * ((i % n) as Real);
+        });
+
+        // Set chi to a small non-zero value (slightly off-equilibrium)
+        let chi_init = 0.3_f64;
+        sim.chi.fill(chi_init);
+        // chi_dot starts at zero (from new())
+
+        sim.dtau = 0.001;
+        sim.solve_scalar_field(dx, n, a_half);
+
+        // chi_dot must have been updated from zero
+        let max_dot = sim.chi_dot.iter().map(|x| x.abs()).fold(0.0_f64, f64::max);
+        assert!(max_dot > 0.0, "chi_dot was not updated by non-static leapfrog");
+
+        // chi must have drifted from its initial value
+        let max_drift = sim.chi.iter().map(|&c| (c - chi_init).abs()).fold(0.0_f64, f64::max);
+        assert!(max_drift > 0.0, "chi did not drift in non-static mode");
+
+        // chi must remain within [-1, 1]
+        assert!(sim.chi.iter().all(|&c| c >= -1.0 && c <= 1.0),
+            "chi left [-1,1] bounds");
+    }
+
+    #[test]
+    fn quasi_static_does_not_update_chi_dot() {
+        let n = 4_usize;
+        let cfg = minimal_config_sym(n, false);
+        let mpi = MpiContext::init();
+        let mut sim = Simulation::new(cfg, mpi);
+
+        let dx = sim.config.run.box_size / n as Real;
+        let a_half = sim.a;
+
+        sim.scratch.rho.fill(1.0);
+        sim.dtau = 0.001;
+        sim.solve_scalar_field(dx, n, a_half);
+
+        // chi_dot must remain zero in quasi-static mode
+        let max_dot = sim.chi_dot.iter().map(|x| x.abs()).fold(0.0_f64, f64::max);
+        assert_eq!(max_dot, 0.0, "quasi-static mode must not touch chi_dot");
+    }
+
+    #[cfg(feature = "hydro")]
+    #[test]
+    fn non_static_sym_hydro_builds_and_runs_step() {
+        // Smoke test: non-static Symmetron + hydro compiled together, one step runs
+        let n = 4_usize;
+        let mut cfg = minimal_config_sym(n, true);
+        cfg.hydro = HydroParams {
+            cooling: false,
+            star_formation: false,
+            supernova_feedback: false,
+            gamma: 5.0 / 3.0,
+            ..Default::default()
+        };
+        let mpi = MpiContext::init();
+        let mut sim = Simulation::new(cfg, mpi);
+
+        // Generate trivial ICs (all particles at origin — just enough to not panic)
+        sim.particles.pos.fill([0.0; 3]);
+        sim.particles.vel.fill([0.0; 3]);
+        sim.scratch.rho.fill(1.0);
+        sim.scratch.gas_rho.fill(0.1);
+        sim.scratch.gas_u.fill(1.0);
+        sim.scratch.gas_vel.fill([0.0; 3]);
+
+        let dx = sim.config.run.box_size / n as Real;
+        let a_half = sim.a;
+        sim.dtau = 0.001;
+
+        // Just calling solve_scalar_field must not panic
+        let _f5 = sim.solve_scalar_field(dx, n, a_half);
+        assert!(_f5.is_some(), "symmetron should return Some fifth force");
     }
 }
