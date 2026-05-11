@@ -571,6 +571,18 @@ impl Simulation {
                 //     so H × Δτ ~ 0.02 (CFL) is naturally dimensionless in this
                 //     unit system — no extra h-rescaling needed.
                 //
+                // Seeding: source_chi(0, ρ, a, p) = 0 × (…) = 0 for any ρ, so χ = 0
+                // everywhere is a fixed point of the EOM.  When a first crosses a_ssb the
+                // symmetric-phase equilibrium becomes unstable, but the leapfrog cannot
+                // spontaneously break symmetry from an exact zero.  We therefore run the
+                // quasi-static multigrid solver once to seed χ into the broken-symmetry
+                // minimum before handing off to the leapfrog.
+                if self.a >= p.a_ssb && self.chi.iter().all(|&x| x == 0.0) {
+                    let chi_seed = solve_symmetron(&self.scratch.rho, self.a, dx, n, &p);
+                    self.chi.copy_from_slice(&chi_seed);
+                    // χ̇ = 0: field arrives at the broken-symmetry minimum at rest.
+                }
+                //
                 // At each step Δτ:
                 //   A   = c_sym² · residual − 3H χ̇     (generalised acceleration)
                 //   χ̇  += (Δτ/2) A                     (half-kick)
