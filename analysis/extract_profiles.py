@@ -264,7 +264,24 @@ def write_profiles(path: Path, r_mid, rho_gas, t_k, rho_dm, counts, n_halos, mas
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def process_dir(outdir: Path, snap: str, params: dict):
+def detect_last_snap(outdir: Path) -> str:
+    """Find the highest-numbered snapshot_NNNN.bin in outdir.
+
+    Returns the zero-padded index string (e.g. "0004"). Falls back to "0000"
+    if none are present, so the caller's "snapshot not found" error path is
+    preserved for empty directories (e.g. quick-run case).
+    """
+    snaps = sorted(outdir.glob("snapshot_[0-9][0-9][0-9][0-9].bin"))
+    if not snaps:
+        return "0000"
+    # Strip "snapshot_" prefix and ".bin" suffix → 4-digit index
+    return snaps[-1].stem.split("_")[-1]
+
+
+def process_dir(outdir: Path, snap: str | None, params: dict):
+    if snap is None:
+        snap = detect_last_snap(outdir)
+        print(f"[auto-snap] {outdir}: using snapshot {snap}")
     snap_path     = outdir / f"snapshot_{snap}.bin"
     gas_snap_path = outdir / f"gas_snapshot_{snap}.bin"
 
@@ -316,8 +333,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dirs",     nargs="+", required=True,
                         help="Output directories to process")
-    parser.add_argument("--snap",     default="0000",
-                        help="Zero-padded snapshot index (default: 0000)")
+    parser.add_argument("--snap",     default=None,
+                        help="Zero-padded snapshot index (default: None — "
+                             "auto-detect last snapshot per directory)")
     parser.add_argument("--box-size", type=float, default=64.0,
                         help="Box side length in Mpc/h (default: 64)")
     parser.add_argument("--h",        type=float, default=0.67,
