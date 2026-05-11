@@ -94,7 +94,7 @@ case "$CMD" in
       "output_ellewsen_sym_d:Sym D"; do
       d="${pair%%:*}"; l="${pair##*:}"
       if [[ -d "$d" ]]; then
-        uv run python analysis/extract_profiles.py --snapdir "$d"
+        uv run python analysis/extract_profiles.py --dirs "$d"
         DIRS+=("$d"); LABELS+=("$l")
       fi
     done
@@ -124,7 +124,7 @@ case "$CMD" in
   quick)
     setup
     run "$BIN_HYDRO" "analysis/params/ellewsen_lcdm_quick.toml" "ΛCDM quick (64³)"
-    uv run python analysis/extract_profiles.py --snapdir output_ellewsen_lcdm_quick
+    uv run python analysis/extract_profiles.py --dirs output_ellewsen_lcdm_quick
     ;;
   *)
     echo "Usage: bash run_ellewsen.sh <lcdm|sym_b|sym_c|sym_d|plot|quick>"

@@ -550,17 +550,41 @@ impl Simulation {
             if p.non_static {
                 // Non-static mode: velocity-Verlet leapfrog for χ and χ̇.
                 //
-                // EOM: ∂²χ/∂τ² + 3H ∂χ/∂τ = ∇²χ − f(χ)
+                // EOM (cosmic-time form, Llinares & Mota 2014, Phys. Rev. D 89 084023 eq. 10,
+                // adapted to the cosmic-time τ used throughout this code base —
+                // see Particles::kick docstring):
+                //
+                //   ∂²χ/∂τ² + 3 H ∂χ/∂τ = c_sym² · [ ∇²χ − f(χ) ]
+                //
+                // Wave-speed factor c_sym² = (H₀_h · λ₀)² = (100 · λ₀)² (km/s)².
+                //   • The scalar-field kinetic term in the symmetron Lagrangian
+                //     propagates at the field's natural symmetron speed, set by
+                //     v₀ = H₀_h × λ₀ in the unit system used for the static
+                //     fifth force (see line ~612, which multiplies (β/a)∇χ by
+                //     this same v₀² to make the units match the gravitational
+                //     acceleration).
+                //   • Without this factor, residual_chi (units (Mpc/h)⁻²) is
+                //     numerically tiny next to (Δτ in Mpc/(km/s))⁻², so χ̇ never
+                //     accumulates and the non-static mode collapses to a
+                //     suppressed quasi-static evolution.
+                //   • Damping `3H × χ̇` uses H in km/s/Mpc and Δτ in Mpc/(km/s),
+                //     so H × Δτ ~ 0.02 (CFL) is naturally dimensionless in this
+                //     unit system — no extra h-rescaling needed.
                 //
                 // At each step Δτ:
-                //   A   = residual − 3H χ̇       (generalised acceleration)
-                //   χ̇  += (Δτ/2) A              (half-kick)
-                //   χ   += Δτ χ̇                 (drift, clamped to [−1,1])
-                //   A'  = residual(χ_new) − 3H χ̇  (re-evaluate at new χ)
-                //   χ̇  += (Δτ/2) A'             (half-kick)
+                //   A   = c_sym² · residual − 3H χ̇     (generalised acceleration)
+                //   χ̇  += (Δτ/2) A                     (half-kick)
+                //   χ   += Δτ χ̇                        (drift, clamped to [−1,1])
+                //   A'  = c_sym² · residual(χ_new) − 3H χ̇   (re-evaluate at new χ)
+                //   χ̇  += (Δτ/2) A'                    (half-kick)
                 let dtau = self.dtau;
                 let h = self.cosmology.hubble(a_half); // H_phys [km/s/Mpc]
                 let damp = 3.0 * h;
+                // Symmetron wave-speed: same v₀² used for the static fifth force
+                // (see f5 conversion below). Keeps non-static and quasi-static
+                // outputs in the same physical units.
+                let v0 = 100.0 * p.lambda_0;           // [km/s], H₀_h × λ₀
+                let c_sym2 = v0 * v0;
                 let n3 = n * n * n;
 
                 // First residual (at χ before this step)
@@ -568,7 +592,7 @@ impl Simulation {
 
                 // Half-kick χ̇
                 for i in 0..n3 {
-                    self.chi_dot[i] += (dtau * 0.5) * (res0[i] - damp * self.chi_dot[i]);
+                    self.chi_dot[i] += (dtau * 0.5) * (c_sym2 * res0[i] - damp * self.chi_dot[i]);
                 }
 
                 // Drift χ
@@ -581,7 +605,7 @@ impl Simulation {
 
                 // Half-kick χ̇
                 for i in 0..n3 {
-                    self.chi_dot[i] += (dtau * 0.5) * (res1[i] - damp * self.chi_dot[i]);
+                    self.chi_dot[i] += (dtau * 0.5) * (c_sym2 * res1[i] - damp * self.chi_dot[i]);
                 }
             } else {
                 // Quasi-static mode: solve ∇²χ = f(χ) to convergence.
