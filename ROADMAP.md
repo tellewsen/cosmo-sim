@@ -228,6 +228,7 @@ Comment updated: "grad_phi returns −∇χ; multiply by +β₀/a to get −(β�
 - [x] Re-run symmetron 64 Mpc/h after sign fix; verify ΔP/P > 0 — PASS
 - [x] MPI support for cluster-scale runs — IMPLEMENTED (see below)
 - [x] Non-static Symmetron leapfrog — velocity-Verlet for χ and χ̇ implemented in `solve_scalar_field`; uses `residual_chi` with correct Hubble damping at `a_half`; previously `non_static=true` silently fell through to quasi-static solver
+- [x] Fix non-static leapfrog unit bug (commit 5223cb8): residual_chi is in (Mpc/h)⁻²; must multiply by c_sym² = (H₀_h·λ₀)² = (100·λ₀)² (km/s)² before accumulating into χ̇ — without this factor χ̇ stays at machine-zero and non-static mode silently collapses to suppressed quasi-static
 - [x] 128³ validation (64 Mpc/h, dx=0.5 Mpc/h=λ₀/2) — PASS, clear symmetron signal confirmed
 - [x] Hydro (Option A): domain-grid Godunov hydro (`--features hydro`) — IMPLEMENTED
   - MUSCL-Hancock Godunov solver (3D, gravity body force, CFL), HLL Riemann, MinMod limiter
