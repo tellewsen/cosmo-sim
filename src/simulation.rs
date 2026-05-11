@@ -578,8 +578,21 @@ impl Simulation {
                 // quasi-static multigrid solver once to seed χ into the broken-symmetry
                 // minimum before handing off to the leapfrog.
                 if self.a >= p.a_ssb && self.chi.iter().all(|&x| x == 0.0) {
-                    let chi_seed = solve_symmetron(&self.scratch.rho, self.a, dx, n, &p);
-                    self.chi.copy_from_slice(&chi_seed);
+                    #[cfg(feature = "mpi_parallel")]
+                    {
+                        use crate::scalar_field::symmetron::solve_symmetron_mpi;
+                        let n_local_i = self.mpi_ctx.slab_count(n);
+                        let i0 = self.mpi_ctx.slab_start(n);
+                        let rho_slab = &self.scratch.rho[i0 * n * n..(i0 + n_local_i) * n * n];
+                        let chi_slab = solve_symmetron_mpi(rho_slab, self.a, dx, n, &p, &self.mpi_ctx);
+                        let chi_full = self.mpi_ctx.allgather_slabs(&chi_slab, n);
+                        self.chi.copy_from_slice(&chi_full);
+                    }
+                    #[cfg(not(feature = "mpi_parallel"))]
+                    {
+                        let chi_seed = solve_symmetron(&self.scratch.rho, self.a, dx, n, &p);
+                        self.chi.copy_from_slice(&chi_seed);
+                    }
                     // χ̇ = 0: field arrives at the broken-symmetry minimum at rest.
                 }
                 //
