@@ -584,7 +584,8 @@ impl Simulation {
                         let n_local_i = self.mpi_ctx.slab_count(n);
                         let i0 = self.mpi_ctx.slab_start(n);
                         let rho_slab = &self.scratch.rho[i0 * n * n..(i0 + n_local_i) * n * n];
-                        let chi_slab = solve_symmetron_mpi(rho_slab, self.a, dx, n, &p, &self.mpi_ctx);
+                        let chi_slab =
+                            solve_symmetron_mpi(rho_slab, self.a, dx, n, &p, &self.mpi_ctx);
                         let chi_full = self.mpi_ctx.allgather_slabs(&chi_slab, n);
                         self.chi.copy_from_slice(&chi_full);
                     }
@@ -608,7 +609,7 @@ impl Simulation {
                 // Symmetron wave-speed: same v₀² used for the static fifth force
                 // (see f5 conversion below). Keeps non-static and quasi-static
                 // outputs in the same physical units.
-                let v0 = 100.0 * p.lambda_0;           // [km/s], H₀_h × λ₀
+                let v0 = 100.0 * p.lambda_0; // [km/s], H₀_h × λ₀
                 let c_sym2 = v0 * v0;
                 let n3 = n * n * n;
 
@@ -638,9 +639,9 @@ impl Simulation {
                 let chi_new = {
                     use crate::scalar_field::symmetron::solve_symmetron_mpi;
                     let n_local_i = self.mpi_ctx.slab_count(n);
-                    let i0        = self.mpi_ctx.slab_start(n);
-                    let rho_slab  = &self.scratch.rho[i0 * n * n..(i0 + n_local_i) * n * n];
-                    let chi_slab  = solve_symmetron_mpi(rho_slab, self.a, dx, n, &p, &self.mpi_ctx);
+                    let i0 = self.mpi_ctx.slab_start(n);
+                    let rho_slab = &self.scratch.rho[i0 * n * n..(i0 + n_local_i) * n * n];
+                    let chi_slab = solve_symmetron_mpi(rho_slab, self.a, dx, n, &p, &self.mpi_ctx);
                     self.mpi_ctx.allgather_slabs(&chi_slab, n)
                 };
                 #[cfg(not(feature = "mpi_parallel"))]
@@ -769,11 +770,11 @@ impl Simulation {
         let np = parts.n as u64;
         f.write_all(&np.to_le_bytes()).unwrap();
         for i in 0..parts.n {
-            for d in 0..3 {
-                f.write_all(&parts.pos[i][d].to_le_bytes()).unwrap();
+            for x in &parts.pos[i] {
+                f.write_all(&x.to_le_bytes()).unwrap();
             }
-            for d in 0..3 {
-                f.write_all(&parts.vel[i][d].to_le_bytes()).unwrap();
+            for v in &parts.vel[i] {
+                f.write_all(&v.to_le_bytes()).unwrap();
             }
         }
         log::info!("Snapshot {idx:04} written → {snap_path}  (a={:.5})", self.a);
@@ -882,9 +883,8 @@ impl Simulation {
             for i in 0..n_grid.pow(3) {
                 gf.write_all(&self.scratch.gas_rho[i].to_le_bytes())
                     .unwrap();
-                for d in 0..3 {
-                    gf.write_all(&self.scratch.gas_vel[i][d].to_le_bytes())
-                        .unwrap();
+                for v in &self.scratch.gas_vel[i] {
+                    gf.write_all(&v.to_le_bytes()).unwrap();
                 }
                 gf.write_all(&self.scratch.gas_u[i].to_le_bytes()).unwrap();
             }
@@ -1007,11 +1007,11 @@ impl Simulation {
         sim.a = a;
 
         for i in 0..np {
-            for d in 0..3 {
-                sim.particles.pos[i][d] = read_f64!();
+            for x in sim.particles.pos[i].iter_mut() {
+                *x = read_f64!();
             }
-            for d in 0..3 {
-                sim.particles.vel[i][d] = read_f64!();
+            for v in sim.particles.vel[i].iter_mut() {
+                *v = read_f64!();
             }
         }
         log::info!("Restarted from '{path}': step={step}, a={a:.5}");
@@ -1023,8 +1023,10 @@ impl Simulation {
 mod tests {
     use super::*;
     use crate::mpi::MpiContext;
-    use crate::utils::config::{Config, RunParams, CosmoParams, GravityParams,
-                               HydroParams, ParticleParams, ScalarFieldParams, OutputParams};
+    use crate::utils::config::{
+        Config, CosmoParams, GravityParams, HydroParams, OutputParams, ParticleParams, RunParams,
+        ScalarFieldParams,
+    };
 
     fn minimal_config_sym(n: usize, non_static: bool) -> Config {
         Config {
@@ -1047,7 +1049,10 @@ mod tests {
                 sigma8: 0.83,
             },
             gravity: GravityParams::default(),
-            particles: ParticleParams { n_part: n as u32, m_part: 0.0 },
+            particles: ParticleParams {
+                n_part: n as u32,
+                m_part: 0.0,
+            },
             scalar_field: ScalarFieldParams {
                 a_ssb: Some(0.5),
                 lambda_0: Some(1.0),
@@ -1091,15 +1096,24 @@ mod tests {
 
         // chi_dot must have been updated from zero
         let max_dot = sim.chi_dot.iter().map(|x| x.abs()).fold(0.0_f64, f64::max);
-        assert!(max_dot > 0.0, "chi_dot was not updated by non-static leapfrog");
+        assert!(
+            max_dot > 0.0,
+            "chi_dot was not updated by non-static leapfrog"
+        );
 
         // chi must have drifted from its initial value
-        let max_drift = sim.chi.iter().map(|&c| (c - chi_init).abs()).fold(0.0_f64, f64::max);
+        let max_drift = sim
+            .chi
+            .iter()
+            .map(|&c| (c - chi_init).abs())
+            .fold(0.0_f64, f64::max);
         assert!(max_drift > 0.0, "chi did not drift in non-static mode");
 
         // chi must remain within [-1, 1]
-        assert!(sim.chi.iter().all(|&c| c >= -1.0 && c <= 1.0),
-            "chi left [-1,1] bounds");
+        assert!(
+            sim.chi.iter().all(|&c| c >= -1.0 && c <= 1.0),
+            "chi left [-1,1] bounds"
+        );
     }
 
     #[test]
