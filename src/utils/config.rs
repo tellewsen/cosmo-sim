@@ -256,12 +256,11 @@ pub fn example_config() -> Config {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "hydro"))]
 mod hydro_config_tests {
     use super::*;
 
     #[test]
-    #[cfg(feature = "hydro")]
     fn hydro_params_defaults() {
         let toml = r#"
             [run]

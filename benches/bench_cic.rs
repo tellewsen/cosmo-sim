@@ -5,7 +5,6 @@ use cosmo_sim::utils::types::Real;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 fn make_particles(n: usize, l: Real) -> Particles {
-    use std::f64::consts::PI;
     let mut p = Particles::new(n, 1.0, l);
     for i in 0..n {
         p.pos[i] = [
